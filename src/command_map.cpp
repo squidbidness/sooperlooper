@@ -146,6 +146,8 @@ CommandMap::CommandMap()
 	add_output_control("in_peak_meter", Event::InPeakMeter, UnitGeneric, 0.0f, 4.0f);
 	add_output_control("out_peak_meter", Event::OutPeakMeter, UnitGeneric, 0.0f, 4.0f);
 	add_output_control("is_soloed", Event::IsSoloed, UnitBoolean);
+	add_output_control("out_peak_meter", Event::OutPeakMeter, UnitGeneric, 0.0f, 4.0f);
+	add_output_control("audio_profile", Event::AudioProfile, UnitGeneric, 0.0f, 4.0f);
 
 	_str_ctrl_map.insert (_output_controls.begin(), _output_controls.end());
 
@@ -225,6 +227,13 @@ void CommandMap::add_output_control(const std::string & name, Event::control_t c
 {
 	_output_controls[name] = ctrl;
 	_ctrl_info_map[name] = ControlInfo(name, ctrl, unit, minVal, maxVal, defaultVal);
+}
+
+void CommandMap::add_output_blob_control(const std::string & name, Event::control_t ctrl, 
+			       ControlUnit unit, float minVal, float maxVal, float * defaultBl)
+{
+	_output_controls[name] = ctrl;
+	_ctrl_info_map[name] = ControlInfo(name, ctrl, unit, minVal, maxVal, defaultBl);
 }
 
 void CommandMap::add_global_control(const std::string & name, Event::control_t ctrl, 

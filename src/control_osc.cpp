@@ -1277,9 +1277,18 @@ ControlOSC::finish_get_event (GetParamEvent & event)
 	}
 	
 //	 cerr << "sending to " << returl << "  path: " << retpath << "  ctrl: " << ctrl << "  val: " <<  event.ret_value << endl;
-
-	if (lo_send(addr, retpath.c_str(), "isf", event.instance, ctrl.c_str(), event.ret_value) == -1) {
-		fprintf(stderr, "OSC error %d: %s\n", lo_address_errno(addr), lo_address_errstr(addr));
+	//if there is a blob send that else send the float
+	if (event.blob_size > 0)  {
+		lo_blob blob = lo_blob_new(event.blob_size, event.ret_blob);
+		cerr << "instance: " << (int)event.instance << endl;
+		if (lo_send(addr, retpath.c_str(), "isb", event.instance, ctrl.c_str(), blob) == -1) {
+			fprintf(stderr, "OSC error %d: %s\n", lo_address_errno(addr), lo_address_errstr(addr));
+		}
+	}
+	else {
+		if (lo_send(addr, retpath.c_str(), "isf", event.instance, ctrl.c_str(), event.ret_value) == -1) {
+			fprintf(stderr, "OSC error %d: %s\n", lo_address_errno(addr), lo_address_errstr(addr));
+		}
 	}
 	
 }

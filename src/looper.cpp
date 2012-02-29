@@ -652,6 +652,21 @@ bool Looper::has_loop() const
         return (_instances && _instances[0] && sl_has_loop(_instances[0]));
 }
 
+std::list<float>
+Looper::get_control_blob(Event::control_t ctrl)
+{
+	if (ctrl == Event::AudioProfile) {
+		std::list<float> test;
+		test.push_back(1.1);
+		test.push_back(2.2);
+		test.push_back(3.3);
+		test.push_back(4.4);
+		test.push_back(5.5);
+		test.push_back(6.6);
+		return test;
+	}
+}
+
 float
 Looper::get_control_value (Event::control_t ctrl)
 {

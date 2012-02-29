@@ -56,6 +56,8 @@ public:
 	{
 		ControlInfo (const std::string & nm, Event::control_t ctl, ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float defaultVal=0.0f)
 			: name(nm), ctrl(ctl), minValue(minVal), maxValue(maxVal), defaultValue(defaultVal), unit(unt) {}
+		ControlInfo (const std::string & nm, Event::control_t ctl, ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float * defaultBl = NULL)
+			: name(nm), ctrl(ctl), minValue(minVal), maxValue(maxVal), defaultBlob(defaultBl), unit(unt) {}
 		ControlInfo() {}
 		ControlInfo(const ControlInfo & other) 
 			: name(other.name), ctrl(other.ctrl), minValue(other.minValue), 
@@ -78,6 +80,7 @@ public:
 		float minValue;
 		float maxValue;
 		float defaultValue;
+		float * defaultBlob;
 		ControlUnit unit;
 	};
 	
@@ -112,6 +115,8 @@ protected:
 			       ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float defaultVal=0.0f);
 	void add_output_control(const std::string & name, Event::control_t ctrl, 
 			       ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float defaultVal=0.0f);
+	void add_output_blob_control(const std::string & name, Event::control_t ctrl, 
+			       ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float * defaultBl = NULL);
 	void add_global_control(const std::string & name, Event::control_t ctrl, 
 			       ControlUnit unt = UnitGeneric, float minVal=0.0f, float maxVal=1.0f, float defaultVal=0.0f);
 

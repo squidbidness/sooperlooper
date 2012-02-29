@@ -68,6 +68,7 @@ class Looper
 	void do_event (Event *ev);
 
 	float get_control_value (Event::control_t ctrl);
+	std::list<float> get_control_blob (Event::control_t ctrl);
 	
 	void set_port (ControlPort n, LADSPA_Data val);
 

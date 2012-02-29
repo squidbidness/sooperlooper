@@ -1693,7 +1693,19 @@ Engine::process_nonrt_event (EventNonRT * event)
 
 	if ((gp_event = dynamic_cast<GetParamEvent*> (event)) != 0)
 	{
-		gp_event->ret_value = get_control_value (gp_event->control, gp_event->instance);
+		if (gp_event->control == Event::AudioProfile) {
+			list<float> tmplist = _instances[gp_event->instance]->get_control_blob(gp_event->control);
+			list<float>::iterator iter;
+			int size = tmplist.size();
+			gp_event->blob_size = (size * sizeof(float));
+			gp_event->ret_blob = new float[size];
+
+			for(iter = tmplist.begin(); iter != tmplist.end(); ++iter) {
+				gp_event->ret_blob[distance(tmplist.begin(),iter)] = (*iter);
+			}
+		}
+		else
+			gp_event->ret_value = get_control_value (gp_event->control, gp_event->instance);
 		_osc->finish_get_event (*gp_event);
 	}
 	else if ((gg_event = dynamic_cast<GlobalGetEvent*> (event)) != 0)

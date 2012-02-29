@@ -118,7 +118,7 @@ namespace SooperLooper {
 	{
 	public:
 		GetParamEvent( int8_t inst, Event::control_t ctrl, std::string returl, std::string retpath)
-			: control(ctrl), instance(inst), ret_url(returl), ret_path(retpath), ret_value(0.0f) {}
+			: control(ctrl), instance(inst), ret_url(returl), ret_path(retpath), ret_value(0.0f), blob_size(0) {}
 		virtual ~GetParamEvent() {}
 		
 		Event::control_t       control;
@@ -127,6 +127,8 @@ namespace SooperLooper {
 		std::string      ret_path;
 
 		float            ret_value;
+		float           *ret_blob;
+		int32_t          blob_size;
 	};
 
 	class ConfigUpdateEvent : public EventNonRT
