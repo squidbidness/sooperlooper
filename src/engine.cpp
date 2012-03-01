@@ -1361,7 +1361,6 @@ Engine::push_sync_event (Event::control_t ctrl, long framepos, MIDI::timestamp_t
 	return;
 }
 
-
 float
 Engine::get_control_value (Event::control_t ctrl, int8_t instance)
 {
@@ -1433,6 +1432,28 @@ Engine::get_control_value (Event::control_t ctrl, int8_t instance)
 	}
 
 	return 0.0f;
+}
+
+list<float>
+Engine::get_control_blob (Event::control_t ctrl, int8_t instance)
+{
+	// not really anymore, this is only called from the nonrt work thread
+	// that does the allocating of instances
+	
+	if (instance == -3) {
+		instance = _selected_loop;
+	}
+	if (instance == -1) {
+		// just use the first
+		instance = 0;
+	}
+
+	if (instance >= 0 && instance < (int) _instances.size()) {
+
+		return _instances[instance]->get_control_blob (ctrl);
+	}
+
+	return *(new list<float>[1]);
 }
 
 
@@ -1694,7 +1715,7 @@ Engine::process_nonrt_event (EventNonRT * event)
 	if ((gp_event = dynamic_cast<GetParamEvent*> (event)) != 0)
 	{
 		if (gp_event->control == Event::AudioProfile) {
-			list<float> tmplist = _instances[gp_event->instance]->get_control_blob(gp_event->control);
+			list<float> tmplist = get_control_blob(gp_event->control, gp_event->instance);
 			list<float>::iterator iter;
 			int size = tmplist.size();
 			gp_event->blob_size = (size * sizeof(float));
@@ -1703,6 +1724,7 @@ Engine::process_nonrt_event (EventNonRT * event)
 			for(iter = tmplist.begin(); iter != tmplist.end(); ++iter) {
 				gp_event->ret_blob[distance(tmplist.begin(),iter)] = (*iter);
 			}
+			tmplist.clear();
 		}
 		else
 			gp_event->ret_value = get_control_value (gp_event->control, gp_event->instance);

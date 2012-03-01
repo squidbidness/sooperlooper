@@ -22,6 +22,7 @@
 
 #include <vector>
 #include <string>
+#include <list>
 
 #include <sigc++/sigc++.h>
 
@@ -107,6 +108,7 @@ class Engine
 	int get_osc_port ();
 
 	float get_control_value (Event::control_t, int8_t instance);
+	std::list<float> get_control_blob (Event::control_t, int8_t instance);
 	
 	SigC::Signal2<void, int, bool> LoopAdded;
 	SigC::Signal0<void> LoopRemoved;

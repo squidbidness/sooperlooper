@@ -92,6 +92,9 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 
 	_index = index;
 	_chan_count = chan_count;
+
+	cerr << "chans: " << chan_count << endl;
+	std::list<float>   _audio_profile[chan_count];
 	
 	_ok = false;
 	requested_cmd = -1;
@@ -1549,6 +1552,8 @@ Looper::load_loop (string fname)
 		// fill input buffers
 		nframes = sf_readf_float (sfile, bigbuf, nframes);
 
+		cerr << "chan count: " << _chan_count << endl;
+		cerr << "file chans: " << filechans << endl;
 		// deinterleave
 		unsigned int n;
 		for (n=0; n < _chan_count && n < filechans; ++n) {
