@@ -94,8 +94,7 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	_chan_count = chan_count;
 
 	cerr << "chans: " << chan_count << endl;
-	std::list<float>   _audio_profile[chan_count];
-	
+
 	_ok = false;
 	requested_cmd = -1;
 	last_requested_cmd = -1;
@@ -658,16 +657,16 @@ bool Looper::has_loop() const
 std::list<float>
 Looper::get_control_blob(Event::control_t ctrl)
 {
-	if (ctrl == Event::AudioProfile) {
-		std::list<float> test;
-		test.push_back(1.1);
-		test.push_back(2.2);
-		test.push_back(3.3);
-		test.push_back(4.4);
-		test.push_back(5.5);
-		test.push_back(6.6);
-		return test;
+	std::list<float> ret;
+	AudioProfile::iterator iter;
+	for (iter = _audio_profile[0].begin(); iter != _audio_profile[0].end(); ++iter) {
+		ret.push_back((*iter).second);
 	}
+	//if ((ctrl == Event::AudioProfile) & (!_audio_profile[0].empty())) {
+	//	ret =  _audio_profile[0];
+	//} else
+	//	ret.push_back(0.0);
+	return ret;
 }
 
 float
@@ -1007,9 +1006,9 @@ void
 Looper::run (nframes_t offset, nframes_t nframes)
 {
 	// this is the audio thread
-	
-	TentativeLockMonitor lm (_loop_lock, __LINE__, __FILE__);
 
+	TentativeLockMonitor lm (_loop_lock, __LINE__, __FILE__);
+	
 	if (!lm.locked()) {
 
 		// treat as bypassed
@@ -1029,7 +1028,6 @@ Looper::run (nframes_t offset, nframes_t nframes)
 		return;
 	}
 
-	_running_frames += nframes;
 	
 	if (request_pending) {
 		
@@ -1110,6 +1108,7 @@ Looper::run (nframes_t offset, nframes_t nframes)
 }
 
 
+nframes_t samples_passed[2] = {0,0};
 void
 Looper::run_loops (nframes_t offset, nframes_t nframes)
 {
@@ -1220,12 +1219,28 @@ Looper::run_loops (nframes_t offset, nframes_t nframes)
 			}
 			inbufs[i] = _tmp_io_bufs[i];
 		}
-		
+
+		if (ports[State] == LooperStateRecording) {
+
+			if (prev_state != LooperStateRecording) {
+				for (unsigned int i=0; i < _chan_count; ++i) 
+					_audio_profile[i].clear();
+			}
+
+			unsigned int profile_sample_index = round(ports[LoopPosition] * 100);
+			compute_peak(inbufs[i],nframes,_audio_profile[i][profile_sample_index]);
+			cerr << _audio_profile[i][profile_sample_index] << endl;
+
+		}
+		prev_state = ports[State];
+
+
 		// no longer needed
 		if (inbufs[i] == 0) continue;
 		
 		// calculate input peak
 		compute_peak (inbufs[i], nframes, _input_peak);
+
 
 	}
 
@@ -1416,6 +1431,7 @@ Looper::run_loops (nframes_t offset, nframes_t nframes)
 			}
 		}
 
+
 		// calculate output peak post mixing with dry
 		compute_peak (outbufs[i], nframes, _output_peak);
 		
@@ -1514,6 +1530,7 @@ Looper::load_loop (string fname)
 	float old_trig_latency = ports[TriggerLatency];
 	float old_round_tempo = ports[RoundIntegerTempo];
 	float old_quantize = ports[Quantize];
+	float old_position = ports[LoopPosition];
 
 	ports[TriggerThreshold] = 0.0f;
 	ports[Sync] = 0.0f;
@@ -1523,6 +1540,7 @@ Looper::load_loop (string fname)
 	ports[TriggerLatency] = 0.0f;
 	ports[RoundIntegerTempo] = 0.0f;
 	ports[Quantize] = (float) QUANT_OFF;
+	ports[LoopPosition] = 0.0f;
 	_slave_sync_port = 0.0f;
 	
 	// now set it to mute just to make sure we weren't already recording
@@ -1535,6 +1553,11 @@ Looper::load_loop (string fname)
 		descriptor->run (_instances[i], 0);
 	}
 
+	//clear audio profile
+	for(int n = 0; n < _chan_count; n++) {
+		_audio_profile[n].clear();
+	}
+
 	// now start recording and run for sinfo.frames total
 	nframes_t nframes = bufsize;
 	nframes_t frames_left = sinfo.frames;
@@ -1542,28 +1565,41 @@ Looper::load_loop (string fname)
 	nframes_t bpos;
 	sample_t * databuf;
 	sample_t * bigbuf  = new float[bufsize * filechans];
-	
+
+	nframes_t srate_div = _driver->get_samplerate()/100;
+  nframes_t prof_frames_left = frames_left/srate_div;
+	nframes_t prof_frames_total = prof_frames_left;
+	nframes_t prof_nframes = nframes/srate_div;
+
 	while (frames_left > 0)
 	{
+		nframes_t profile_div = srate_div;
+
 		if (nframes > frames_left) {
 			nframes = frames_left;
+			prof_nframes = prof_frames_left;
 		}
+
+		cerr << "frames_left: " << frames_left << "  " << prof_frames_left << endl;
+		cerr << "nframes: " << nframes << "  " << prof_nframes << endl;
+		cerr << " x nframes: " << prof_nframes * srate_div << endl;
+		cerr << "prof total: " << prof_frames_total << endl;
 
 		// fill input buffers
 		nframes = sf_readf_float (sfile, bigbuf, nframes);
 
-		cerr << "chan count: " << _chan_count << endl;
-		cerr << "file chans: " << filechans << endl;
 		// deinterleave
 		unsigned int n;
 		for (n=0; n < _chan_count && n < filechans; ++n) {
 			databuf = inbufs[n];
 			bpos = n;
 			for (nframes_t m=0; m < nframes; ++m) {
-				
 				databuf[m] = bigbuf[bpos];
 				bpos += filechans;
 			}
+			//for (nframes_t i= 0;i < nframes;i+=128) {
+			//	_audio_profile[n].push_back(fabsf(databuf[i]));
+			//}
 		}
 		for (; n < _chan_count; ++n) {
 			// clear leftover channels (maybe we should duplicate last one, we'll see)
@@ -1572,6 +1608,15 @@ Looper::load_loop (string fname)
 			// duplicate last one
 			memcpy (inbufs[n], inbufs[filechans-1], sizeof(float) * nframes);
 		}
+
+
+		for (int n = 0; n < _chan_count; ++n) {
+			for (nframes_t m=0; m < prof_nframes; ++m) {
+				unsigned int profile_sample_index = prof_frames_total - prof_frames_left + m;
+				compute_min_max(&inbufs[n][m*profile_div],profile_div,_audio_profile[n][profile_sample_index]);
+			}
+		}
+	
 		
 		
 		for (unsigned int i=0; i < _chan_count; ++i)
@@ -1583,6 +1628,7 @@ Looper::load_loop (string fname)
 		
 
 		frames_left -= nframes;
+		prof_frames_left = frames_left / srate_div;
 	}
 	
 	// change state to unknown, then the end record (with mute optionally)
@@ -1619,6 +1665,7 @@ Looper::load_loop (string fname)
 	ports[TriggerLatency] = old_trig_latency;
 	ports[RoundIntegerTempo] = old_round_tempo;
 	ports[Quantize] = old_quantize;
+	ports[LoopPosition] = old_position;
 	_slave_sync_port = _relative_sync ? 2.0f: 1.0f;
 	
 	ret = true;

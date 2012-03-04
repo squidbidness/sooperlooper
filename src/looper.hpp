@@ -119,12 +119,8 @@ class Looper
 
 	void recompute_latencies();
 	
-  protected:
-
-	void run_loops (nframes_t offset, nframes_t nframes);
-	void run_loops_resampled (nframes_t offset, nframes_t nframes);
-
 	static void compute_peak (sample_t *buf, nframes_t nsamples, float& peak) {
+
 		float p = peak;
 		
 		for (nframes_t n = 0; n < nsamples; ++n) {
@@ -133,8 +129,24 @@ class Looper
 		
 		peak = p;
 	}	
-	
-		
+
+	static void compute_min_max (sample_t *buf, nframes_t nsamples, float& output) {
+
+		float p = 0.0;
+
+		for (nframes_t n = 0; n < nsamples; ++n) {
+			if (fabsf(p) < fabsf(buf[n])) {
+					p = buf[n];
+			}
+		}
+		output = p;
+	}	
+
+  protected:
+
+	void run_loops (nframes_t offset, nframes_t nframes);
+	void run_loops_resampled (nframes_t offset, nframes_t nframes);
+
 	int requested_cmd;
 	int last_requested_cmd;
 	
@@ -179,6 +191,12 @@ class Looper
 	float              _input_peak;
 	float              _output_peak;
 	float              _falloff_per_sample;
+
+	typedef std::map<nframes_t, float> AudioProfile;
+	typedef std::map<int, AudioProfile> AudioProfilesAllChans;
+
+	AudioProfilesAllChans _audio_profile;
+	int									prev_state;
 	
 	LADSPA_Data         _slave_sync_port;
 	LADSPA_Data         _slave_dummy_port;
