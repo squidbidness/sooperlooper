@@ -132,7 +132,7 @@ class Looper
 
 	static void compute_min_max (sample_t *buf, nframes_t nsamples, float& output) {
 
-		float p = 0.0;
+		float p = output;
 
 		for (nframes_t n = 0; n < nsamples; ++n) {
 			if (fabsf(p) < fabsf(buf[n])) {
@@ -193,9 +193,15 @@ class Looper
 	float              _falloff_per_sample;
 
 	typedef std::map<nframes_t, float> AudioProfile;
-	typedef std::map<int, AudioProfile> AudioProfilesAllChans;
+	typedef std::map<int, AudioProfile> AudioProfileStates;
+	typedef std::map<int, AudioProfileStates> AudioProfilesAllChans;
+
+	int _ap_undo_state;
 
 	AudioProfilesAllChans _audio_profile;
+	AudioProfileStates    _audio_prof_insert_at_end;
+	AudioProfileStates    _overdub_profile;
+
 	int									prev_state;
 	
 	LADSPA_Data         _slave_sync_port;

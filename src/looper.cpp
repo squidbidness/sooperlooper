@@ -93,7 +93,7 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	_index = index;
 	_chan_count = chan_count;
 
-	cerr << "chans: " << chan_count << endl;
+	_ap_undo_state = 0;
 
 	_ok = false;
 	requested_cmd = -1;
@@ -502,7 +502,7 @@ Looper::finish_state()
 	Event ev;
 	ev.Type = Event::type_cmd_hit;
 	ev.Command = Event::UNKNOWN;
-	
+
 	switch ((int)ports[State]) {
 		case LooperStateRecording:
 			ev.Command = Event::RECORD; break;
@@ -659,7 +659,7 @@ Looper::get_control_blob(Event::control_t ctrl)
 {
 	std::list<float> ret;
 	AudioProfile::iterator iter;
-	for (iter = _audio_profile[0].begin(); iter != _audio_profile[0].end(); ++iter) {
+	for (iter = _audio_profile[0][_ap_undo_state].begin(); iter != _audio_profile[0][_ap_undo_state].end(); ++iter) {
 		ret.push_back((*iter).second);
 	}
 	//if ((ctrl == Event::AudioProfile) & (!_audio_profile[0].empty())) {
@@ -887,9 +887,7 @@ Looper::do_event (Event *ev)
 					}
 				}
 			}
-                        //fprintf(stderr, "Got UP cmd: %d  req: %d\n", cmd, requested_cmd);
-
-			
+			//fprintf(stderr, "Got UP cmd: %d  req: %d\n", cmd, requested_cmd);
 			_down_stamps[cmd] = 0;
 		}
 	}
@@ -997,7 +995,74 @@ Looper::do_event (Event *ev)
 
 	}
 
-	
+	////shadow the plugin in what it does to the audio and reproduce in the audio profile
+	////here we just prepare the profile as much as possible before run_loops actually inserts the data
+	//if (request_pending) {
+	//	//cerr << "loop length: " << ports[LoopLength] << endl;
+	//	int state = ports[State];
+	//	switch(requested_cmd) {
+	//		case Event::RECORD:
+	//			if (state != LooperStateRecording) {
+	//				_ap_undo_state++;
+	//				for (unsigned int i=0; i < _chan_count; ++i) 
+	//					_audio_profile[i][_ap_undo_state].clear();
+	//			}
+	//			break;
+	//		case Event::RECORD_OR_OVERDUB:
+	//			if (ports[LoopLength] == 0.0) {
+	//				_ap_undo_state++;
+	//				for (unsigned int i=0; i < _chan_count; ++i) 
+	//					_audio_profile[i][_ap_undo_state].clear();
+	//			} else if (state != LooperStateOverdubbing) {
+	//				_ap_undo_state++;
+	//			}
+	//			break;
+	//		case Event::OVERDUB:
+	//			if (state != LooperStateOverdubbing) {
+	//				_ap_undo_state++;
+	//				for (unsigned int i=0; i < _chan_count; ++i) {
+	//					_overdub_profile[i].clear();
+	//					//AudioProfile::iterator iter = _audio_profile[i][_ap_undo_state - 1].begin();
+	//					//AudioProfile::iterator first_iter = iter;
+	//					_audio_profile[i][_ap_undo_state] = _audio_profile[i][_ap_undo_state - 1];
+	//					//for (;iter != _audio_profile[i][_ap_undo_state - 1].end();++iter) {
+	//					//	_audio_profile[i][_ap_undo_state][(*iter).first] = (*iter).second * feedback;
+	//					//}
+	//				}
+	//			}
+	//			break;
+	//		case Event::INSERT:
+	//			if (state != LooperStateInserting) {
+	//				_ap_undo_state++;
+	//				unsigned int ap_sample = round(ports[LoopPosition] * 100) + 1;
+	//				for (unsigned int i=0; i < _chan_count; ++i) {
+	//					AudioProfile::iterator insert_iter = _audio_profile[i][_ap_undo_state - 1].find(ap_sample);
+	//					_audio_prof_insert_at_end[i].clear();
+	//					_audio_profile[i][_ap_undo_state].insert(_audio_profile[i][_ap_undo_state - 1].begin(),insert_iter);
+	//					_audio_prof_insert_at_end[i].insert(insert_iter,_audio_profile[i][_ap_undo_state - 1].end());	
+	//				}
+	//			} 
+	//			break;
+	//		case Event::UNDO:
+	//			_ap_undo_state--;
+	//			break;
+	//		case Event::UNDO_TWICE:
+	//			_ap_undo_state--;
+	//			if (_ap_undo_state > 0)
+	//				_ap_undo_state--;
+	//			break;
+	//		case Event::REDO:
+	//			if (!_audio_profile[0][_ap_undo_state+1].empty())
+	//				_ap_undo_state++;
+	//			break;
+	//		case Event::UNDO_ALL:
+	//			_ap_undo_state = 0;
+	//			break;
+	//	} 
+	//}
+
+	//cerr << "profile state:" << _ap_undo_state << endl;
+
 	// todo other stuff
 }
 
@@ -1030,7 +1095,7 @@ Looper::run (nframes_t offset, nframes_t nframes)
 
 	
 	if (request_pending) {
-		
+
 		if (ports[Multi] == requested_cmd) {
 			/* defer till next call */
 			ports[Multi] = -1;
@@ -1220,19 +1285,34 @@ Looper::run_loops (nframes_t offset, nframes_t nframes)
 			inbufs[i] = _tmp_io_bufs[i];
 		}
 
-		if (ports[State] == LooperStateRecording) {
+		//unsigned int ap_sample = round(ports[LoopPosition] * 100);
+		//int state = ports[State];
 
-			if (prev_state != LooperStateRecording) {
-				for (unsigned int i=0; i < _chan_count; ++i) 
-					_audio_profile[i].clear();
-			}
-
-			unsigned int profile_sample_index = round(ports[LoopPosition] * 100);
-			compute_peak(inbufs[i],nframes,_audio_profile[i][profile_sample_index]);
-			cerr << _audio_profile[i][profile_sample_index] << endl;
-
-		}
-		prev_state = ports[State];
+		//switch (state) {
+		//	case LooperStateRecording:
+		//		compute_min_max(inbufs[i],nframes,_audio_profile[i][_ap_undo_state][ap_sample]);
+		//		break;
+		//	case LooperStateOverdubbing:
+		//		compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
+		//		_audio_profile[i][_ap_undo_state][ap_sample] *= ports[Feedback];
+		//		_audio_profile[i][_ap_undo_state][ap_sample] += _overdub_profile[i][ap_sample];
+		//		break;
+		//	case LooperStateInserting:
+		//		compute_min_max(inbufs[i],nframes,_audio_profile[i][_ap_undo_state][ap_sample]);
+		//		break;
+		//}
+		////add the rest of the loop back to the profile after insert
+		//if (prev_state == LooperStateInserting && state != LooperStateInserting) {
+		//	unsigned int length = _audio_profile[i][_ap_undo_state].size() - 1;
+		//	for (unsigned int i=0; i < _chan_count; ++i) {
+		//		AudioProfile::iterator iter = _audio_prof_insert_at_end[i].begin();
+		//		for (;iter != _audio_prof_insert_at_end[i].end(); ++iter) {
+		//			_audio_profile[i][_ap_undo_state][length + (*iter).first] = (*iter).second;
+		//		}
+		//		//	_audio_profile[i][_ap_undo_state].insert(_audio_prof_insert_at_end[i].begin(),_audio_prof_insert_at_end[i].end());
+		//	}
+		//}
+		//prev_state = state;
 
 
 		// no longer needed
@@ -1530,7 +1610,6 @@ Looper::load_loop (string fname)
 	float old_trig_latency = ports[TriggerLatency];
 	float old_round_tempo = ports[RoundIntegerTempo];
 	float old_quantize = ports[Quantize];
-	float old_position = ports[LoopPosition];
 
 	ports[TriggerThreshold] = 0.0f;
 	ports[Sync] = 0.0f;
@@ -1597,9 +1676,6 @@ Looper::load_loop (string fname)
 				databuf[m] = bigbuf[bpos];
 				bpos += filechans;
 			}
-			//for (nframes_t i= 0;i < nframes;i+=128) {
-			//	_audio_profile[n].push_back(fabsf(databuf[i]));
-			//}
 		}
 		for (; n < _chan_count; ++n) {
 			// clear leftover channels (maybe we should duplicate last one, we'll see)
@@ -1612,8 +1688,8 @@ Looper::load_loop (string fname)
 
 		for (int n = 0; n < _chan_count; ++n) {
 			for (nframes_t m=0; m < prof_nframes; ++m) {
-				unsigned int profile_sample_index = prof_frames_total - prof_frames_left + m;
-				compute_min_max(&inbufs[n][m*profile_div],profile_div,_audio_profile[n][profile_sample_index]);
+				unsigned int ap_sample = prof_frames_total - prof_frames_left + m;
+				compute_min_max(&inbufs[n][m*profile_div],profile_div,_audio_profile[n][_ap_undo_state][ap_sample]);
 			}
 		}
 	
@@ -1665,7 +1741,6 @@ Looper::load_loop (string fname)
 	ports[TriggerLatency] = old_trig_latency;
 	ports[RoundIntegerTempo] = old_round_tempo;
 	ports[Quantize] = old_quantize;
-	ports[LoopPosition] = old_position;
 	_slave_sync_port = _relative_sync ? 2.0f: 1.0f;
 	
 	ret = true;
