@@ -1093,6 +1093,7 @@ Looper::run (nframes_t offset, nframes_t nframes)
 		return;
 	}
 
+	_running_frames += nframes;
 	
 	if (request_pending) {
 
