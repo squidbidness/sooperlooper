@@ -94,6 +94,7 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	_chan_count = chan_count;
 
 	_ap_undo_state = 0;
+	_silence_insert = false;
 
 	_ok = false;
 	requested_cmd = -1;
@@ -659,13 +660,9 @@ Looper::get_control_blob(Event::control_t ctrl)
 {
 	std::list<float> ret;
 	AudioProfile::iterator iter;
-	for (iter = _audio_profile[0][_ap_undo_state].begin(); iter != _audio_profile[0][_ap_undo_state].end(); ++iter) {
+	for (iter = _audio_profile[_ap_undo_state][0].begin(); iter != _audio_profile[_ap_undo_state][0].end(); ++iter) {
 		ret.push_back((*iter).second);
 	}
-	//if ((ctrl == Event::AudioProfile) & (!_audio_profile[0].empty())) {
-	//	ret =  _audio_profile[0];
-	//} else
-	//	ret.push_back(0.0);
 	return ret;
 }
 
@@ -995,71 +992,65 @@ Looper::do_event (Event *ev)
 
 	}
 
-	////shadow the plugin in what it does to the audio and reproduce in the audio profile
-	////here we just prepare the profile as much as possible before run_loops actually inserts the data
-	//if (request_pending) {
-	//	//cerr << "loop length: " << ports[LoopLength] << endl;
-	//	int state = ports[State];
-	//	switch(requested_cmd) {
-	//		case Event::RECORD:
-	//			if (state != LooperStateRecording) {
-	//				_ap_undo_state++;
-	//				for (unsigned int i=0; i < _chan_count; ++i) 
-	//					_audio_profile[i][_ap_undo_state].clear();
-	//			}
-	//			break;
-	//		case Event::RECORD_OR_OVERDUB:
-	//			if (ports[LoopLength] == 0.0) {
-	//				_ap_undo_state++;
-	//				for (unsigned int i=0; i < _chan_count; ++i) 
-	//					_audio_profile[i][_ap_undo_state].clear();
-	//			} else if (state != LooperStateOverdubbing) {
-	//				_ap_undo_state++;
-	//			}
-	//			break;
-	//		case Event::OVERDUB:
-	//			if (state != LooperStateOverdubbing) {
-	//				_ap_undo_state++;
-	//				for (unsigned int i=0; i < _chan_count; ++i) {
-	//					_overdub_profile[i].clear();
-	//					//AudioProfile::iterator iter = _audio_profile[i][_ap_undo_state - 1].begin();
-	//					//AudioProfile::iterator first_iter = iter;
-	//					_audio_profile[i][_ap_undo_state] = _audio_profile[i][_ap_undo_state - 1];
-	//					//for (;iter != _audio_profile[i][_ap_undo_state - 1].end();++iter) {
-	//					//	_audio_profile[i][_ap_undo_state][(*iter).first] = (*iter).second * feedback;
-	//					//}
-	//				}
-	//			}
-	//			break;
-	//		case Event::INSERT:
-	//			if (state != LooperStateInserting) {
-	//				_ap_undo_state++;
-	//				unsigned int ap_sample = round(ports[LoopPosition] * 100) + 1;
-	//				for (unsigned int i=0; i < _chan_count; ++i) {
-	//					AudioProfile::iterator insert_iter = _audio_profile[i][_ap_undo_state - 1].find(ap_sample);
-	//					_audio_prof_insert_at_end[i].clear();
-	//					_audio_profile[i][_ap_undo_state].insert(_audio_profile[i][_ap_undo_state - 1].begin(),insert_iter);
-	//					_audio_prof_insert_at_end[i].insert(insert_iter,_audio_profile[i][_ap_undo_state - 1].end());	
-	//				}
-	//			} 
-	//			break;
-	//		case Event::UNDO:
-	//			_ap_undo_state--;
-	//			break;
-	//		case Event::UNDO_TWICE:
-	//			_ap_undo_state--;
-	//			if (_ap_undo_state > 0)
-	//				_ap_undo_state--;
-	//			break;
-	//		case Event::REDO:
-	//			if (!_audio_profile[0][_ap_undo_state+1].empty())
-	//				_ap_undo_state++;
-	//			break;
-	//		case Event::UNDO_ALL:
-	//			_ap_undo_state = 0;
-	//			break;
-	//	} 
-	//}
+	//shadow the plugin in what it does to the audio and reproduce in the audio profile
+	//here we just prepare the profile as much as possible before run_loops actually inserts the data
+	if (request_pending) {
+		int state = ports[State];
+		switch(requested_cmd) {
+			case Event::RECORD:
+				if (state != LooperStateRecording) {
+					_ap_undo_state++;
+					_audio_profile[_ap_undo_state].clear();
+				}
+				break;
+			case Event::RECORD_OR_OVERDUB:
+				if (ports[LoopLength] == 0.0) {
+					_ap_undo_state++;
+					_audio_profile[_ap_undo_state].clear();
+				} else if (state != LooperStateOverdubbing) {
+					_ap_undo_state++;
+				}
+				break;
+			case Event::OVERDUB:
+				if (state != LooperStateOverdubbing) {
+					_ap_undo_state++;
+					_overdub_profile.clear();
+					_audio_profile[_ap_undo_state] = _audio_profile[_ap_undo_state - 1];
+				}
+				break;
+			case Event::INSERT:
+				//copy the data before the sample at which insert was called to the new undo state
+				//hold the rest until finished with insert to add on to the end
+				if (state != LooperStateInserting) {
+					unsigned int ap_sample = round(ports[LoopPosition] * 100) + 1;
+					for (unsigned int i=0; i < _chan_count; ++i) {
+						AudioProfile::iterator insert_iter = _audio_profile[_ap_undo_state][i].find(ap_sample);
+						_audio_profile[_ap_undo_state+1][i].insert(_audio_profile[_ap_undo_state][i].begin(),insert_iter);
+						_after_insert_profile[i].insert(insert_iter,_audio_profile[_ap_undo_state][i].end());	
+					}
+					_ap_undo_state++;
+					_silence_insert = false;
+				} else {
+					_silence_insert = true;
+				}
+				break;
+			case Event::UNDO:
+				_ap_undo_state--;
+				break;
+			case Event::UNDO_TWICE:
+				_ap_undo_state--;
+				if (_ap_undo_state > 0)
+					_ap_undo_state--;
+				break;
+			case Event::REDO:
+				if (!_audio_profile[_ap_undo_state+1][0].empty())
+					_ap_undo_state++;
+				break;
+			case Event::UNDO_ALL:
+				_ap_undo_state = 0;
+				break;
+		} 
+	}
 
 	//cerr << "profile state:" << _ap_undo_state << endl;
 
@@ -1286,34 +1277,39 @@ Looper::run_loops (nframes_t offset, nframes_t nframes)
 			inbufs[i] = _tmp_io_bufs[i];
 		}
 
-		//unsigned int ap_sample = round(ports[LoopPosition] * 100);
-		//int state = ports[State];
 
-		//switch (state) {
-		//	case LooperStateRecording:
-		//		compute_min_max(inbufs[i],nframes,_audio_profile[i][_ap_undo_state][ap_sample]);
-		//		break;
-		//	case LooperStateOverdubbing:
-		//		compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
-		//		_audio_profile[i][_ap_undo_state][ap_sample] *= ports[Feedback];
-		//		_audio_profile[i][_ap_undo_state][ap_sample] += _overdub_profile[i][ap_sample];
-		//		break;
-		//	case LooperStateInserting:
-		//		compute_min_max(inbufs[i],nframes,_audio_profile[i][_ap_undo_state][ap_sample]);
-		//		break;
-		//}
-		////add the rest of the loop back to the profile after insert
-		//if (prev_state == LooperStateInserting && state != LooperStateInserting) {
-		//	unsigned int length = _audio_profile[i][_ap_undo_state].size() - 1;
-		//	for (unsigned int i=0; i < _chan_count; ++i) {
-		//		AudioProfile::iterator iter = _audio_prof_insert_at_end[i].begin();
-		//		for (;iter != _audio_prof_insert_at_end[i].end(); ++iter) {
-		//			_audio_profile[i][_ap_undo_state][length + (*iter).first] = (*iter).second;
-		//		}
-		//		//	_audio_profile[i][_ap_undo_state].insert(_audio_prof_insert_at_end[i].begin(),_audio_prof_insert_at_end[i].end());
-		//	}
-		//}
-		//prev_state = state;
+		//get data for the audio profile
+		unsigned int ap_sample = round(ports[LoopPosition] * 100); //100Hz rate and window
+		int state = ports[State];
+
+		switch (state) {
+			case LooperStateInserting:
+				if (!_silence_insert) 
+					compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
+				else
+					_audio_profile[_ap_undo_state][i][ap_sample] = 0.0;
+				break;
+			case LooperStateRecording:
+				compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
+				break;
+			case LooperStateOverdubbing:
+				compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
+				_audio_profile[_ap_undo_state][i][ap_sample] *= ports[Feedback];
+				_audio_profile[_ap_undo_state][i][ap_sample] += _overdub_profile[i][ap_sample];
+				break;
+		}
+		//add the rest of the loop back to the profile after insert
+		if (prev_state == LooperStateInserting && state != LooperStateInserting) {
+			unsigned int length = _audio_profile[_ap_undo_state][i].size() - 1;
+			for (unsigned int i=0; i < _chan_count; ++i) {
+				AudioProfile::iterator iter = _after_insert_profile[i].begin();
+				for (;iter != _after_insert_profile[i].end(); ++iter) {
+					_audio_profile[_ap_undo_state][i][length + (*iter).first] = (*iter).second;
+				}
+				_after_insert_profile.clear();
+			}
+		}
+		prev_state = state;
 
 
 		// no longer needed
@@ -1634,9 +1630,8 @@ Looper::load_loop (string fname)
 	}
 
 	//clear audio profile
-	for(int n = 0; n < _chan_count; n++) {
-		_audio_profile[n].clear();
-	}
+	_ap_undo_state++;
+	_audio_profile[_ap_undo_state].clear();
 
 	// now start recording and run for sinfo.frames total
 	nframes_t nframes = bufsize;
@@ -1660,11 +1655,6 @@ Looper::load_loop (string fname)
 			prof_nframes = prof_frames_left;
 		}
 
-		cerr << "frames_left: " << frames_left << "  " << prof_frames_left << endl;
-		cerr << "nframes: " << nframes << "  " << prof_nframes << endl;
-		cerr << " x nframes: " << prof_nframes * srate_div << endl;
-		cerr << "prof total: " << prof_frames_total << endl;
-
 		// fill input buffers
 		nframes = sf_readf_float (sfile, bigbuf, nframes);
 
@@ -1686,11 +1676,11 @@ Looper::load_loop (string fname)
 			memcpy (inbufs[n], inbufs[filechans-1], sizeof(float) * nframes);
 		}
 
-
+		// compute audio profile
 		for (int n = 0; n < _chan_count; ++n) {
 			for (nframes_t m=0; m < prof_nframes; ++m) {
 				unsigned int ap_sample = prof_frames_total - prof_frames_left + m;
-				compute_min_max(&inbufs[n][m*profile_div],profile_div,_audio_profile[n][_ap_undo_state][ap_sample]);
+				compute_min_max(&inbufs[n][m*profile_div],profile_div,_audio_profile[_ap_undo_state][n][ap_sample]);
 			}
 		}
 	

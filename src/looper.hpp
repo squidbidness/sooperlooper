@@ -119,17 +119,6 @@ class Looper
 
 	void recompute_latencies();
 	
-	static void compute_peak (sample_t *buf, nframes_t nsamples, float& peak) {
-
-		float p = peak;
-		
-		for (nframes_t n = 0; n < nsamples; ++n) {
-			p = f_max (p, fabsf(buf[n]));
-		}
-		
-		peak = p;
-	}	
-
 	static void compute_min_max (sample_t *buf, nframes_t nsamples, float& output) {
 
 		float p = output;
@@ -143,6 +132,18 @@ class Looper
 	}	
 
   protected:
+
+	static void compute_peak (sample_t *buf, nframes_t nsamples, float& peak) {
+
+		float p = peak;
+		
+		for (nframes_t n = 0; n < nsamples; ++n) {
+			p = f_max (p, fabsf(buf[n]));
+		}
+		
+		peak = p;
+	}	
+
 
 	void run_loops (nframes_t offset, nframes_t nframes);
 	void run_loops_resampled (nframes_t offset, nframes_t nframes);
@@ -193,16 +194,17 @@ class Looper
 	float              _falloff_per_sample;
 
 	typedef std::map<nframes_t, float> AudioProfile;
-	typedef std::map<int, AudioProfile> AudioProfileStates;
-	typedef std::map<int, AudioProfileStates> AudioProfilesAllChans;
+	typedef std::map<int, AudioProfile> AudioProfileChans;
+	typedef std::map<int, AudioProfileChans> AudioProfileStates;
 
 	int _ap_undo_state;
 
-	AudioProfilesAllChans _audio_profile;
-	AudioProfileStates    _audio_prof_insert_at_end;
-	AudioProfileStates    _overdub_profile;
+	AudioProfileStates	 _audio_profile;
+	AudioProfileChans    _after_insert_profile;
+	AudioProfileChans    _overdub_profile;
 
 	int									prev_state;
+	bool                _silence_insert;
 	
 	LADSPA_Data         _slave_sync_port;
 	LADSPA_Data         _slave_dummy_port;
