@@ -1714,7 +1714,7 @@ Engine::process_nonrt_event (EventNonRT * event)
 
 	if ((gp_event = dynamic_cast<GetParamEvent*> (event)) != 0)
 	{
-		if (gp_event->control == Event::AudioProfile) {
+		if (gp_event->control == Event::AudioProfile1 || gp_event->control == Event::AudioProfile2) {
 			list<float> tmplist = get_control_blob(gp_event->control, gp_event->instance);
 			list<float>::iterator iter;
 			int size = tmplist.size();

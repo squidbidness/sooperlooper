@@ -94,715 +94,750 @@ Looper::initialize (unsigned int index, unsigned int chan_count, float loopsecs,
 	_chan_count = chan_count;
 
 	_ap_undo_state = 0;
-	_silence_insert = false;
+_last_ap_sample[chan_count] = {0.0};
+_silence_insert = false;
 
-	_ok = false;
-	requested_cmd = -1;
-	last_requested_cmd = -1;
-	request_pending = false;
-	_input_ports = 0;
-	_output_ports = 0;
-	_instances = 0;
-	_buffersize = 0;
-	_use_sync_buf = 0;
-	_our_syncin_buf = 0;
-	_our_syncout_buf = 0;
-	_dummy_buf = 0;
-	_tmp_io_bufs = 0;
-	_running_frames = 0;
-	_use_common_ins = true;
-	_use_common_outs = true;
-	_auto_latency = true;  // default for now
-	_disable_latency = false;
-	_last_trigger_latency = 0.0f;
-	_last_input_latency = 0.0f;
-	_last_output_latency = 0.0f;
-	_have_discrete_io = discrete;
-	_curr_dry = 0.0f;
-	_target_dry = 0.0f;
-	_curr_input_gain = 1.0f;
-	_targ_input_gain = 1.0f;
-	_input_peak = 0.0f;
-	_output_peak = 0.0f;
-	_panner = 0;
-	_relative_sync = false;
-	descriptor = 0;
-	_pre_solo_muted = false;
-	_stretch_ratio = 1.0;
-	_pitch_shift = 0.0;
-	_stretch_buffer = 0;
-	_tempo_stretch = false;
-	_pending_stretch = false;
-	_pending_stretch_ratio = 0.0;
-	_is_soloed = false;
+_ok = false;
+requested_cmd = -1;
+last_requested_cmd = -1;
+request_pending = false;
+_input_ports = 0;
+_output_ports = 0;
+_instances = 0;
+_buffersize = 0;
+_use_sync_buf = 0;
+_our_syncin_buf = 0;
+_our_syncout_buf = 0;
+_dummy_buf = 0;
+_tmp_io_bufs = 0;
+_running_frames = 0;
+_use_common_ins = true;
+_use_common_outs = true;
+_auto_latency = true;  // default for now
+_disable_latency = false;
+_last_trigger_latency = 0.0f;
+_last_input_latency = 0.0f;
+_last_output_latency = 0.0f;
+_have_discrete_io = discrete;
+_curr_dry = 0.0f;
+_target_dry = 0.0f;
+_curr_input_gain = 1.0f;
+_targ_input_gain = 1.0f;
+_input_peak = 0.0f;
+_output_peak = 0.0f;
+_panner = 0;
+_relative_sync = false;
+descriptor = 0;
+_pre_solo_muted = false;
+_stretch_ratio = 1.0;
+_pitch_shift = 0.0;
+_stretch_buffer = 0;
+_tempo_stretch = false;
+_pending_stretch = false;
+_pending_stretch_ratio = 0.0;
+_is_soloed = false;
 
-	if (!descriptor) {
-		descriptor = create_sl_descriptor ();
+if (!descriptor) {
+	descriptor = create_sl_descriptor ();
+}
+
+
+_instances = new LADSPA_Handle[_chan_count];
+_input_ports = new port_id_t[_chan_count];
+_output_ports = new port_id_t[_chan_count];
+
+// SRC stuff
+_in_src_states = new SRC_STATE*[_chan_count];
+_out_src_states = new SRC_STATE*[_chan_count];
+memset (_in_src_states, 0, sizeof(SRC_STATE*) * _chan_count);
+memset (_out_src_states, 0, sizeof(SRC_STATE*) * _chan_count);
+
+_insync_src_state = src_new (SRC_LINEAR, 1, &dummyerror);
+_outsync_src_state = src_new (SRC_LINEAR, 1, &dummyerror);
+
+_src_sync_buffer = 0;
+_src_in_buffer = 0;
+_src_buffer_len = 0;
+_src_in_ratio = 1.0;
+_src_out_ratio = 1.0;
+
+_lp_filter = new OnePoleFilter*[_chan_count];
+memset (_lp_filter, 0, sizeof(OnePoleFilter*) * _chan_count);
+
+
+_tmp_io_bufs = new float*[_chan_count];
+memset(_tmp_io_bufs, 0, sizeof(float *) * _chan_count);
+
+nframes_t srate = _driver->get_samplerate();
+
+// rubberband stretch stuff
+_in_stretcher = new RubberBandStretcher(srate, _chan_count, 
+						 RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionTransientsCrisp);
+_out_stretcher = new RubberBandStretcher(srate, _chan_count, 
+						 RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionTransientsCrisp);
+
+
+set_buffer_size(_driver->get_buffersize());
+
+memset (_instances, 0, sizeof(LADSPA_Handle) * _chan_count);
+memset (_input_ports, 0, sizeof(port_id_t) * _chan_count);
+memset (_output_ports, 0, sizeof(port_id_t) * _chan_count);
+memset (ports, 0, sizeof(float) * LASTPORT);
+
+memset(_down_stamps, 0, sizeof(nframes_t) * (Event::LAST_COMMAND+1));
+			/*
+for (int i=0; i < (int) Event::LAST_COMMAND+1; ++i) {
+	_down_stamps[i] = 1 << 31;
+}
+			*/
+
+_longpress_frames = (nframes_t) lrint (srate * 1.0); // more than 1 secs is SUS
+_doubletap_frames = (nframes_t) lrint (srate * 0.5); // less than 0.5 sec is double tap
+
+_falloff_per_sample = 30.0f / srate; // 30db per second falloff
+
+// set some rational defaults
+ports[DryLevel] = 0.0f;
+ports[WetLevel] = 1.0f;
+ports[Feedback] = 1.0f;
+ports[Rate] = 1.0f;
+ports[Multi] = -1.0f;
+ports[Sync] = 0.0f;
+ports[Quantize] = 0.0f;
+ports[UseRate] = 0.0f;
+ports[FadeSamples] = 64.0f;
+ports[PlaybackSync] = 0.0f;
+ports[UseSafetyFeedback] = 1.0f;
+ports[TriggerLatency] = 0;
+ports[MuteQuantized] = 0;
+
+ports[RoundIntegerTempo] = 0;
+
+_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : 1.0f;
+
+// TODO: fix hack to specify loop length
+char looptimestr[20];
+snprintf(looptimestr, sizeof(looptimestr), "%f", loopsecs);
+setenv("SL_SAMPLE_TIME", looptimestr, 1);
+
+
+for (unsigned int i=0; i < _chan_count; ++i)
+{
+	_tmp_io_bufs[i] = new float[_buffersize];
+
+	if ((_instances[i] = descriptor->instantiate (descriptor, srate)) == 0) {
+		return false;
 	}
 
+	sl_set_loop_index(_instances[i], (int)_index, i);
+	
+	if (_have_discrete_io) 
+	{
+		snprintf(tmpstr, sizeof(tmpstr), "loop%d_in_%d", _index, i+1);
+		
+		if (!_driver->create_input_port (tmpstr, _input_ports[i])) {
+			
+			cerr << "cannot register loop input port\n";
+			_have_discrete_io = false;
+		}
+		
+		snprintf(tmpstr, sizeof(tmpstr), "loop%d_out_%d", _index, i+1);
+		
+		if (!_driver->create_output_port (tmpstr, _output_ports[i]))
+		{
+			cerr << "cannot register loop output port\n";
+			_have_discrete_io = false;
+		}
+	}
 
-	_instances = new LADSPA_Handle[_chan_count];
-	_input_ports = new port_id_t[_chan_count];
-	_output_ports = new port_id_t[_chan_count];
+	/* connect all scalar ports to data values */
+	
+	for (unsigned long n = 0; n < LASTPORT; ++n) {
+		descriptor->connect_port (_instances[i], n, &ports[n]);
+	}
+
+	// connect dedicated Sync port to all other channels
+	if (i > 0) {
+		descriptor->connect_port (_instances[i], Sync, &_slave_sync_port);
+
+		descriptor->connect_port (_instances[i], State, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], LoopLength, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], LoopPosition, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], CycleLength, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], LoopFreeMemory, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], LoopMemory, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], Waiting, &_slave_dummy_port);
+		descriptor->connect_port (_instances[i], TrueRate, &_slave_dummy_port);
+	}
+	
+	descriptor->activate (_instances[i]);
+
+	_lp_filter[i] = new OnePoleFilter(srate);
 	
 	// SRC stuff
-	_in_src_states = new SRC_STATE*[_chan_count];
-	_out_src_states = new SRC_STATE*[_chan_count];
-	memset (_in_src_states, 0, sizeof(SRC_STATE*) * _chan_count);
-	memset (_out_src_states, 0, sizeof(SRC_STATE*) * _chan_count);
-
-	_insync_src_state = src_new (SRC_LINEAR, 1, &dummyerror);
-	_outsync_src_state = src_new (SRC_LINEAR, 1, &dummyerror);
-
-	_src_sync_buffer = 0;
-	_src_in_buffer = 0;
-	_src_buffer_len = 0;
-	_src_in_ratio = 1.0;
-	_src_out_ratio = 1.0;
-
-	_lp_filter = new OnePoleFilter*[_chan_count];
-	memset (_lp_filter, 0, sizeof(OnePoleFilter*) * _chan_count);
-
-
-	_tmp_io_bufs = new float*[_chan_count];
-	memset(_tmp_io_bufs, 0, sizeof(float *) * _chan_count);
-
-	nframes_t srate = _driver->get_samplerate();
+	_in_src_states[i] = src_new (SrcAudioQuality, 1, &dummyerror);
+	_out_src_states[i] = src_new (SrcAudioQuality, 1, &dummyerror);
+	_lp_filter[i]->set_cutoff (_src_in_ratio * _lp_filter[i]->get_samplerate() * 0.48f);
 	
-	// rubberband stretch stuff
-	_in_stretcher = new RubberBandStretcher(srate, _chan_count, 
-					     RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionTransientsCrisp);
-	_out_stretcher = new RubberBandStretcher(srate, _chan_count, 
-					     RubberBandStretcher::OptionProcessRealTime | RubberBandStretcher::OptionTransientsCrisp);
-
 	
-	set_buffer_size(_driver->get_buffersize());
-	
-	memset (_instances, 0, sizeof(LADSPA_Handle) * _chan_count);
-	memset (_input_ports, 0, sizeof(port_id_t) * _chan_count);
-	memset (_output_ports, 0, sizeof(port_id_t) * _chan_count);
-	memset (ports, 0, sizeof(float) * LASTPORT);
+}
 
-	memset(_down_stamps, 0, sizeof(nframes_t) * (Event::LAST_COMMAND+1));
-        /*
-	for (int i=0; i < (int) Event::LAST_COMMAND+1; ++i) {
-	  _down_stamps[i] = 1 << 31;
+size_t comnouts = _driver->get_engine()->get_common_output_count();
+_panner = 0;
+if (comnouts > 1) {
+	// we really only support panning to 2 outputs right now
+	_panner = new Panner("pan");
+	_panner->reset (comnouts, _chan_count);
+
+	if (_chan_count == 1) {
+		(*_panner)[0]->set_position (0.5f);
 	}
-        */
-
-	_longpress_frames = (nframes_t) lrint (srate * 1.0); // more than 1 secs is SUS
-	_doubletap_frames = (nframes_t) lrint (srate * 0.5); // less than 0.5 sec is double tap
-
-	_falloff_per_sample = 30.0f / srate; // 30db per second falloff
-	
-	// set some rational defaults
-	ports[DryLevel] = 0.0f;
-	ports[WetLevel] = 1.0f;
-	ports[Feedback] = 1.0f;
-	ports[Rate] = 1.0f;
-	ports[Multi] = -1.0f;
-	ports[Sync] = 0.0f;
-	ports[Quantize] = 0.0f;
-	ports[UseRate] = 0.0f;
-	ports[FadeSamples] = 64.0f;
-	ports[PlaybackSync] = 0.0f;
-	ports[UseSafetyFeedback] = 1.0f;
-	ports[TriggerLatency] = 0;
-	ports[MuteQuantized] = 0;
-	
-	ports[RoundIntegerTempo] = 0;
-
-	_slave_sync_port = (_relative_sync && ports[Sync]) ? 2.0f : 1.0f;
-
-	// TODO: fix hack to specify loop length
-	char looptimestr[20];
-	snprintf(looptimestr, sizeof(looptimestr), "%f", loopsecs);
-	setenv("SL_SAMPLE_TIME", looptimestr, 1);
-
-	
-	for (unsigned int i=0; i < _chan_count; ++i)
-	{
-		_tmp_io_bufs[i] = new float[_buffersize];
-
-		if ((_instances[i] = descriptor->instantiate (descriptor, srate)) == 0) {
-			return false;
-		}
-
-		sl_set_loop_index(_instances[i], (int)_index, i);
-		
-		if (_have_discrete_io) 
-		{
-			snprintf(tmpstr, sizeof(tmpstr), "loop%d_in_%d", _index, i+1);
-			
-			if (!_driver->create_input_port (tmpstr, _input_ports[i])) {
-				
-				cerr << "cannot register loop input port\n";
-				_have_discrete_io = false;
-			}
-			
-			snprintf(tmpstr, sizeof(tmpstr), "loop%d_out_%d", _index, i+1);
-			
-			if (!_driver->create_output_port (tmpstr, _output_ports[i]))
-			{
-				cerr << "cannot register loop output port\n";
-				_have_discrete_io = false;
-			}
-		}
-
-		/* connect all scalar ports to data values */
-		
-		for (unsigned long n = 0; n < LASTPORT; ++n) {
-			descriptor->connect_port (_instances[i], n, &ports[n]);
-		}
-
-		// connect dedicated Sync port to all other channels
-		if (i > 0) {
-			descriptor->connect_port (_instances[i], Sync, &_slave_sync_port);
-
-			descriptor->connect_port (_instances[i], State, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], LoopLength, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], LoopPosition, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], CycleLength, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], LoopFreeMemory, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], LoopMemory, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], Waiting, &_slave_dummy_port);
-			descriptor->connect_port (_instances[i], TrueRate, &_slave_dummy_port);
-		}
-		
-		descriptor->activate (_instances[i]);
-
-		_lp_filter[i] = new OnePoleFilter(srate);
-		
-		// SRC stuff
-		_in_src_states[i] = src_new (SrcAudioQuality, 1, &dummyerror);
-		_out_src_states[i] = src_new (SrcAudioQuality, 1, &dummyerror);
-		_lp_filter[i]->set_cutoff (_src_in_ratio * _lp_filter[i]->get_samplerate() * 0.48f);
-		
-		
+	else if (_chan_count == 2) {
+		(*_panner)[0]->set_position (0.0f);
+		(*_panner)[1]->set_position (1.0f);
 	}
-
-	size_t comnouts = _driver->get_engine()->get_common_output_count();
-	_panner = 0;
-	if (comnouts > 1) {
-		// we really only support panning to 2 outputs right now
-		_panner = new Panner("pan");
-		_panner->reset (comnouts, _chan_count);
-
-		if (_chan_count == 1) {
-			(*_panner)[0]->set_position (0.5f);
-		}
-		else if (_chan_count == 2) {
-			(*_panner)[0]->set_position (0.0f);
-			(*_panner)[1]->set_position (1.0f);
-		}
-		else {
-			// eh, no good defaults
-		}
+	else {
+		// eh, no good defaults
 	}
+}
 
-	_ok = true;
+_ok = true;
 
-	return _ok;
+return _ok;
 }
 
 
 Looper::~Looper ()
 {
-	destroy();
-	
-	if (descriptor) {
-		cleanup_sl_descriptor (descriptor);
-	}
-	
+destroy();
+
+if (descriptor) {
+	cleanup_sl_descriptor (descriptor);
+}
+
 }
 
 
 void
 Looper::destroy()
 {
-	for (unsigned int i=0; i < _chan_count; ++i)
-	{
-		if (_instances[i]) {
-			if (descriptor->deactivate) {
-				descriptor->deactivate (_instances[i]);
-			}
-			if (descriptor->cleanup) {
-				descriptor->cleanup (_instances[i]);
-			}
-			_instances[i] = 0;
+for (unsigned int i=0; i < _chan_count; ++i)
+{
+	if (_instances[i]) {
+		if (descriptor->deactivate) {
+			descriptor->deactivate (_instances[i]);
 		}
-
-		if (_input_ports[i]) {
-			_driver->destroy_input_port (_input_ports[i]);
-			_input_ports[i] = 0;
+		if (descriptor->cleanup) {
+			descriptor->cleanup (_instances[i]);
 		}
-		
-		if (_output_ports[i]) {
-			_driver->destroy_output_port (_output_ports[i]);
-			_output_ports[i] = 0;
-		}
-
-
-		if (_out_src_states[i]) {
-			src_delete (_out_src_states[i]);
-		}
-		if (_in_src_states[i]) {
-			src_delete (_in_src_states[i]);
-		}
-
-
-		if (_lp_filter[i]) {
-			delete _lp_filter[i];
-		}
-
-		if (_tmp_io_bufs[i]) {
-			delete _tmp_io_bufs[i];
-		}
+		_instances[i] = 0;
 	}
 
-	delete [] _instances;
-	delete [] _input_ports;
-	delete [] _output_ports;
-
-	if (_our_syncin_buf)
-		delete [] _our_syncin_buf;
-	
-	if (_our_syncout_buf)
-		delete [] _our_syncout_buf;
-	
-	if (_dummy_buf)
-		delete [] _dummy_buf;
-
-	if (_tmp_io_bufs)
-		delete [] _tmp_io_bufs;
-
-	delete [] _lp_filter;
-
-	if (_panner) {
-		delete _panner;
+	if (_input_ports[i]) {
+		_driver->destroy_input_port (_input_ports[i]);
+		_input_ports[i] = 0;
 	}
 	
-	// SRC stuff
-	delete [] _in_src_states;
-	delete [] _out_src_states;
-
-	if (_insync_src_state)
-		src_delete (_insync_src_state);
-	if (_outsync_src_state)
-		src_delete (_outsync_src_state);
-	
-	if (_src_sync_buffer) 
-		delete [] _src_sync_buffer;
-	if (_src_in_buffer) 
-		delete [] _src_in_buffer;
-
-	// rubberband
-	delete _in_stretcher;
-	delete _out_stretcher;
-
-	if (_stretch_buffer) {
-		delete [] _stretch_buffer;
-		_stretch_buffer = 0;
+	if (_output_ports[i]) {
+		_driver->destroy_output_port (_output_ports[i]);
+		_output_ports[i] = 0;
 	}
+
+
+	if (_out_src_states[i]) {
+		src_delete (_out_src_states[i]);
+	}
+	if (_in_src_states[i]) {
+		src_delete (_in_src_states[i]);
+	}
+
+
+	if (_lp_filter[i]) {
+		delete _lp_filter[i];
+	}
+
+	if (_tmp_io_bufs[i]) {
+		delete _tmp_io_bufs[i];
+	}
+}
+
+delete [] _instances;
+delete [] _input_ports;
+delete [] _output_ports;
+
+if (_our_syncin_buf)
+	delete [] _our_syncin_buf;
+
+if (_our_syncout_buf)
+	delete [] _our_syncout_buf;
+
+if (_dummy_buf)
+	delete [] _dummy_buf;
+
+if (_tmp_io_bufs)
+	delete [] _tmp_io_bufs;
+
+delete [] _lp_filter;
+
+if (_panner) {
+	delete _panner;
+}
+
+// SRC stuff
+delete [] _in_src_states;
+delete [] _out_src_states;
+
+if (_insync_src_state)
+	src_delete (_insync_src_state);
+if (_outsync_src_state)
+	src_delete (_outsync_src_state);
+
+if (_src_sync_buffer) 
+	delete [] _src_sync_buffer;
+if (_src_in_buffer) 
+	delete [] _src_in_buffer;
+
+// rubberband
+delete _in_stretcher;
+delete _out_stretcher;
+
+if (_stretch_buffer) {
+	delete [] _stretch_buffer;
+	_stretch_buffer = 0;
+}
 }
 
 
 void 
 Looper::set_use_common_ins (bool val)
 {
-	_use_common_ins = val;
+_use_common_ins = val;
 }
 
 void 
 Looper::set_use_common_outs (bool val)
 {
-	_use_common_outs = val;
+_use_common_outs = val;
 }
 
 void
 Looper::use_sync_buf(sample_t * buf)
 {
-	if (buf) {
-		_use_sync_buf = buf;
-	}
-	else {
-		_use_sync_buf = _our_syncin_buf;
-	}
+if (buf) {
+	_use_sync_buf = buf;
+}
+else {
+	_use_sync_buf = _our_syncin_buf;
+}
 }
 
 void 
 Looper::set_samples_since_sync(nframes_t ssync)
 {
-	// this is a bit of a hack
-	for (unsigned int i=0; i < _chan_count; ++i)
-	{
-		sl_set_samples_since_sync(_instances[i], ssync);
-	}
+// this is a bit of a hack
+for (unsigned int i=0; i < _chan_count; ++i)
+{
+	sl_set_samples_since_sync(_instances[i], ssync);
+}
 }
 
 void 
 Looper::set_replace_quantized(bool flag)
 {
-	// this is a bit of a hack
-	for (unsigned int i=0; i < _chan_count; ++i)
-	{
-		sl_set_replace_quantized(_instances[i], flag);
-	}
+// this is a bit of a hack
+for (unsigned int i=0; i < _chan_count; ++i)
+{
+	sl_set_replace_quantized(_instances[i], flag);
+}
 }
 
 void 
 Looper::set_soloed (int index, bool value, bool retrigger)
 {
-	if (index != (int) _index) {
-		// someone else is being soloed (or unsoloed), note our mute state, then mute self
-		if (value) {
-			if (ports[State] != LooperStateMuted) {
-				_pre_solo_muted = false;
-				Event ev;
-				ev.Type = Event::type_cmd_hit;
-				ev.Command = Event::MUTE_ON;
-				do_event(&ev);
-			}
-			else {
-				_pre_solo_muted = true;
-			}
-			_is_soloed = false;
-		}
-		else {
-			// they are being unsoloed, restore our mute state
-			if (!_pre_solo_muted) {
-				Event ev;
-				ev.Type = Event::type_cmd_hit;
-				ev.Command = Event::MUTE_OFF;
-				do_event(&ev);
-			}
-		}
-	}
-	else {
-                // we are the target of the solo
-		_is_soloed = value;
-			
-		if (value && ports[State] == LooperStateMuted) {                     
-			// ensure we are not muted if we are soloed
+if (index != (int) _index) {
+	// someone else is being soloed (or unsoloed), note our mute state, then mute self
+	if (value) {
+		if (ports[State] != LooperStateMuted) {
+			_pre_solo_muted = false;
 			Event ev;
 			ev.Type = Event::type_cmd_hit;
-                        if (retrigger) {
-                                ev.Command = Event::TRIGGER;
-                        }
-                        else {
-                                ev.Command = Event::MUTE_OFF;
-                        }
+			ev.Command = Event::MUTE_ON;
+			do_event(&ev);
+		}
+		else {
+			_pre_solo_muted = true;
+		}
+		_is_soloed = false;
+	}
+	else {
+		// they are being unsoloed, restore our mute state
+		if (!_pre_solo_muted) {
+			Event ev;
+			ev.Type = Event::type_cmd_hit;
+			ev.Command = Event::MUTE_OFF;
 			do_event(&ev);
 		}
 	}
+}
+else {
+							// we are the target of the solo
+	_is_soloed = value;
+		
+	if (value && ports[State] == LooperStateMuted) {                     
+		// ensure we are not muted if we are soloed
+		Event ev;
+		ev.Type = Event::type_cmd_hit;
+											if (retrigger) {
+															ev.Command = Event::TRIGGER;
+											}
+											else {
+															ev.Command = Event::MUTE_OFF;
+											}
+		do_event(&ev);
+	}
+}
 }
 
 bool
 Looper::finish_state()
 {
-	Event ev;
-	ev.Type = Event::type_cmd_hit;
-	ev.Command = Event::UNKNOWN;
+Event ev;
+ev.Type = Event::type_cmd_hit;
+ev.Command = Event::UNKNOWN;
 
-	switch ((int)ports[State]) {
-		case LooperStateRecording:
-			ev.Command = Event::RECORD; break;
-		case LooperStateOverdubbing:
-			ev.Command = Event::OVERDUB; break;
-		case LooperStateMultiplying:
-			ev.Command = Event::MULTIPLY; break;
-		case LooperStateReplacing:
-			ev.Command = Event::REPLACE; break;
-		case LooperStateSubstitute:
-			ev.Command = Event::SUBSTITUTE; break;
-		case LooperStateInserting:
-			ev.Command = Event::INSERT; break;
-		default: break;
-	}
+switch ((int)ports[State]) {
+	case LooperStateRecording:
+		ev.Command = Event::RECORD; break;
+	case LooperStateOverdubbing:
+		ev.Command = Event::OVERDUB; break;
+	case LooperStateMultiplying:
+		ev.Command = Event::MULTIPLY; break;
+	case LooperStateReplacing:
+		ev.Command = Event::REPLACE; break;
+	case LooperStateSubstitute:
+		ev.Command = Event::SUBSTITUTE; break;
+	case LooperStateInserting:
+		ev.Command = Event::INSERT; break;
+	default: break;
+}
 
-	if (ev.Command != Event::UNKNOWN) {
-		do_event(&ev);
-		/*
-		for (unsigned int i=0; i < _chan_count; ++i)
-		{
-			// run it for 0 frames just to change state
-			descriptor->run (_instances[i], 0);
-		}
-		*/
-		return true;
+if (ev.Command != Event::UNKNOWN) {
+	do_event(&ev);
+	/*
+	for (unsigned int i=0; i < _chan_count; ++i)
+	{
+		// run it for 0 frames just to change state
+		descriptor->run (_instances[i], 0);
 	}
-	return false;
+	*/
+	return true;
+}
+return false;
 }
 
 void
 Looper::set_buffer_size (nframes_t bufsize)
 {
-	if (_buffersize != bufsize) {
-		//cerr << "setting buffer size to " << bufsize << endl;
-		if (_use_sync_buf == _our_syncin_buf) {
-			_use_sync_buf = 0;
-		}
-
-		if (_our_syncin_buf) {
-			delete [] _our_syncin_buf;
-		}
-		
-		if (_our_syncout_buf)
-			delete [] _our_syncout_buf;
-
-		if (_dummy_buf)
-			delete [] _dummy_buf;
-	
-		for (size_t i=0; i < _chan_count; ++i) {
-			if (_tmp_io_bufs[i]) {
-				delete [] _tmp_io_bufs[i];
-			}
-
-			_tmp_io_bufs[i] = new float[_buffersize];
-		}
-		
-		_buffersize = bufsize;
-		
-		_our_syncin_buf = new float[_buffersize];
-		_our_syncout_buf = new float[_buffersize];
-		// big enough for use with resampling too
-		_dummy_buf = new float[(nframes_t) ceil (_buffersize * MaxResamplingRate)];
-		
-		if (_use_sync_buf == 0) {
-			_use_sync_buf = _our_syncin_buf;
-		}
-
-
-		if (_src_sync_buffer) 
-			delete [] _src_sync_buffer;
-		if (_src_in_buffer) 
-			delete [] _src_in_buffer;
-		_src_buffer_len = (nframes_t) ceil (_buffersize * MaxResamplingRate);
-		_src_sync_buffer = new float[_src_buffer_len];
-		_src_in_buffer = new float[_src_buffer_len];
-
-		_stretch_buffer = new float[_src_buffer_len * _chan_count];
-
-		// set automatic latency values if appropriate
-		recompute_latencies();
+if (_buffersize != bufsize) {
+	//cerr << "setting buffer size to " << bufsize << endl;
+	if (_use_sync_buf == _our_syncin_buf) {
+		_use_sync_buf = 0;
 	}
+
+	if (_our_syncin_buf) {
+		delete [] _our_syncin_buf;
+	}
+	
+	if (_our_syncout_buf)
+		delete [] _our_syncout_buf;
+
+	if (_dummy_buf)
+		delete [] _dummy_buf;
+
+	for (size_t i=0; i < _chan_count; ++i) {
+		if (_tmp_io_bufs[i]) {
+			delete [] _tmp_io_bufs[i];
+		}
+
+		_tmp_io_bufs[i] = new float[_buffersize];
+	}
+	
+	_buffersize = bufsize;
+	
+	_our_syncin_buf = new float[_buffersize];
+	_our_syncout_buf = new float[_buffersize];
+	// big enough for use with resampling too
+	_dummy_buf = new float[(nframes_t) ceil (_buffersize * MaxResamplingRate)];
+	
+	if (_use_sync_buf == 0) {
+		_use_sync_buf = _our_syncin_buf;
+	}
+
+
+	if (_src_sync_buffer) 
+		delete [] _src_sync_buffer;
+	if (_src_in_buffer) 
+		delete [] _src_in_buffer;
+	_src_buffer_len = (nframes_t) ceil (_buffersize * MaxResamplingRate);
+	_src_sync_buffer = new float[_src_buffer_len];
+	_src_in_buffer = new float[_src_buffer_len];
+
+	_stretch_buffer = new float[_src_buffer_len * _chan_count];
+
+	// set automatic latency values if appropriate
+	recompute_latencies();
+}
 }
 
 void Looper::set_disable_latency_compensation(bool val)
 {
-	if (val != _disable_latency) {
-		_disable_latency = val;
-		if (val) {
-			_last_trigger_latency = ports[TriggerLatency];
-			_last_input_latency = ports[InputLatency];
-			_last_output_latency = ports[OutputLatency] ;
-		} else {
-			ports[TriggerLatency] = _last_trigger_latency;
-			ports[InputLatency] = _last_input_latency;
-			ports[OutputLatency] = _last_output_latency;
-		}
-
-		recompute_latencies(); 
+if (val != _disable_latency) {
+	_disable_latency = val;
+	if (val) {
+		_last_trigger_latency = ports[TriggerLatency];
+		_last_input_latency = ports[InputLatency];
+		_last_output_latency = ports[OutputLatency] ;
+	} else {
+		ports[TriggerLatency] = _last_trigger_latency;
+		ports[InputLatency] = _last_input_latency;
+		ports[OutputLatency] = _last_output_latency;
 	}
+
+	recompute_latencies(); 
+}
 }
 
 void
 Looper::recompute_latencies()
 {
-	// auto?
-	if (_auto_latency)
-	{
-		ports[TriggerLatency] = _buffersize; // jitter correction
+// auto?
+if (_auto_latency)
+{
+	ports[TriggerLatency] = _buffersize; // jitter correction
 
 
-		ports[InputLatency] = _driver->get_input_port_latency(_input_ports[0]);
-		if (_use_common_ins) {
-			port_id_t comnport = 0;
-			if (_driver->get_engine()->get_common_input (0, comnport)) {
-				ports[InputLatency] = _driver->get_input_port_latency(comnport);
-			}
+	ports[InputLatency] = _driver->get_input_port_latency(_input_ports[0]);
+	if (_use_common_ins) {
+		port_id_t comnport = 0;
+		if (_driver->get_engine()->get_common_input (0, comnport)) {
+			ports[InputLatency] = _driver->get_input_port_latency(comnport);
 		}
-	
-		ports[OutputLatency] = _driver->get_output_port_latency(_output_ports[0]);
-		if (_use_common_outs) {
-			port_id_t comnport = 0;
-			if (_driver->get_engine()->get_common_output (0, comnport)) {
-				ports[OutputLatency] = _driver->get_output_port_latency(comnport);
-			}
+	}
+
+	ports[OutputLatency] = _driver->get_output_port_latency(_output_ports[0]);
+	if (_use_common_outs) {
+		port_id_t comnport = 0;
+		if (_driver->get_engine()->get_common_output (0, comnport)) {
+			ports[OutputLatency] = _driver->get_output_port_latency(comnport);
 		}
-
 	}
+
+}
+
+if (_disable_latency) {
+	ports[TriggerLatency] = 0; // should we?
+	ports[InputLatency] = 0;
+	ports[OutputLatency] = 0;
+}
+
+// add any latency due to timestretch
+if (_stretch_ratio != 1.0) {
+	//ports[OutputLatency] += _out_stretcher->getLatency();
+	ports[SyncOffsetSamples] = _out_stretcher->getLatency();
+}
 	
-	if (_disable_latency) {
-		ports[TriggerLatency] = 0; // should we?
-		ports[InputLatency] = 0;
-		ports[OutputLatency] = 0;
-	}
 
-	// add any latency due to timestretch
-	if (_stretch_ratio != 1.0) {
-		//ports[OutputLatency] += _out_stretcher->getLatency();
-		ports[SyncOffsetSamples] = _out_stretcher->getLatency();
-	}
-		
-
-	//cerr << "input lat: " << ports[InputLatency] << endl;
-	//cerr << "output lat: " << ports[OutputLatency] << endl;
+//cerr << "input lat: " << ports[InputLatency] << endl;
+//cerr << "output lat: " << ports[OutputLatency] << endl;
 }
 
 bool Looper::has_loop() const
 {
-        return (_instances && _instances[0] && sl_has_loop(_instances[0]));
+			return (_instances && _instances[0] && sl_has_loop(_instances[0]));
 }
 
 std::list<float>
 Looper::get_control_blob(Event::control_t ctrl)
 {
-	std::list<float> ret;
-	AudioProfile::iterator iter;
-	for (iter = _audio_profile[_ap_undo_state][0].begin(); iter != _audio_profile[_ap_undo_state][0].end(); ++iter) {
+std::list<float> ret;
+AudioProfile::iterator iter;
+if (ctrl == Event::AudioProfile1) {
+	for (iter = _audio_profile[_ap_undo_state][0].begin(); iter != _audio_profile[_ap_undo_state][0].end(); ++iter)
 		ret.push_back((*iter).second);
-	}
-	return ret;
+}
+else if (ctrl == Event::AudioProfile2) {
+	for (iter = _audio_profile[_ap_undo_state][1].begin(); iter != _audio_profile[_ap_undo_state][1].end(); ++iter)
+		ret.push_back((*iter).second);
+}
+return ret;
 }
 
 float
 Looper::get_control_value (Event::control_t ctrl)
 {
-	int index = (int) ctrl;
-	float pan_pos;
-	
-	if (ctrl == Event::DryLevel) {
-		//return _curr_dry;
-		return _target_dry;
+int index = (int) ctrl;
+float pan_pos;
+
+if (ctrl == Event::DryLevel) {
+	//return _curr_dry;
+	return _target_dry;
+}
+else if (index >= 0 && index < LASTPORT) {
+	return ports[index];
+}
+else if (ctrl == Event::AudioProfile1) 
+{
+	//return (*(--_audio_profile[_ap_undo_state][0].end())).second;
+	return _last_ap_sample[0];
+}
+else if (ctrl == Event::AudioProfile2) 
+{
+	//return (*(--_audio_profile[_ap_undo_state][0].end())).second;
+	return _last_ap_sample[1];
+}
+else if (ctrl == Event::OutPeakMeter) 
+{
+	return _output_peak;
+}
+else if (ctrl == Event::InPeakMeter) 
+{
+	return _input_peak;
+}
+else if (ctrl == Event::InputGain) {
+	return _curr_input_gain;
+}
+else if (ctrl == Event::ReplaceQuantized) {
+	return sl_get_replace_quantized(_instances[0]) ? 1.0f : 0.0f;
+}
+else if (ctrl == Event::RelativeSync) {
+	return _relative_sync;
+}
+else if (ctrl == Event::UseCommonOuts) {
+	return _use_common_outs;
+}
+else if (ctrl == Event::UseCommonIns) {
+	return _use_common_ins;
+}
+else if (ctrl == Event::HasDiscreteIO) {
+	return _have_discrete_io;
+}
+else if (ctrl == Event::AutosetLatency) {
+	return _auto_latency;
+}
+else if (ctrl == Event::IsSoloed) {
+	return _is_soloed ? 1.0f : 0.0f;
+}
+else if (ctrl == Event::StretchRatio) {
+	return _stretch_ratio;
+}
+else if (ctrl == Event::PitchShift) {
+	return _pitch_shift;
+}
+else if (ctrl == Event::TempoStretch) {
+	return _tempo_stretch ? 1.0f: 0.0f;
+}
+// i wish i could do something better for this
+else if (ctrl == Event::PanChannel1) {
+	if (_panner && _panner->size() > 0) {
+		(*_panner)[0]->get_position (pan_pos);
+		return pan_pos;
 	}
-	else if (index >= 0 && index < LASTPORT) {
-		return ports[index];
+}
+else if (ctrl == Event::PanChannel2) {
+	if (_panner && _panner->size() > 1) {
+		(*_panner)[1]->get_position (pan_pos);
+		return pan_pos;
 	}
-	else if (ctrl == Event::OutPeakMeter) 
-	{
-		return _output_peak;
+}
+else if (ctrl == Event::PanChannel3) {
+	if (_panner && _panner->size() > 2) {
+		(*_panner)[2]->get_position (pan_pos);
+		return pan_pos;
 	}
-	else if (ctrl == Event::InPeakMeter) 
-	{
-		return _input_peak;
+}
+else if (ctrl == Event::PanChannel4) {
+	if (_panner && _panner->size() > 3) {
+		(*_panner)[3]->get_position (pan_pos);
+		return pan_pos;
 	}
-	else if (ctrl == Event::InputGain) {
-		return _curr_input_gain;
-	}
-	else if (ctrl == Event::ReplaceQuantized) {
-		return sl_get_replace_quantized(_instances[0]) ? 1.0f : 0.0f;
-	}
-	else if (ctrl == Event::RelativeSync) {
-		return _relative_sync;
-	}
-	else if (ctrl == Event::UseCommonOuts) {
-		return _use_common_outs;
-	}
-	else if (ctrl == Event::UseCommonIns) {
-		return _use_common_ins;
-	}
-	else if (ctrl == Event::HasDiscreteIO) {
-		return _have_discrete_io;
-	}
-	else if (ctrl == Event::AutosetLatency) {
-		return _auto_latency;
-	}
-	else if (ctrl == Event::IsSoloed) {
-		return _is_soloed ? 1.0f : 0.0f;
-	}
-	else if (ctrl == Event::StretchRatio) {
-		return _stretch_ratio;
-	}
-	else if (ctrl == Event::PitchShift) {
-		return _pitch_shift;
-	}
-	else if (ctrl == Event::TempoStretch) {
-		return _tempo_stretch ? 1.0f: 0.0f;
-	}
-	// i wish i could do something better for this
-	else if (ctrl == Event::PanChannel1) {
-		if (_panner && _panner->size() > 0) {
-			(*_panner)[0]->get_position (pan_pos);
-			return pan_pos;
-		}
-	}
-	else if (ctrl == Event::PanChannel2) {
-		if (_panner && _panner->size() > 1) {
-			(*_panner)[1]->get_position (pan_pos);
-			return pan_pos;
-		}
-	}
-	else if (ctrl == Event::PanChannel3) {
-		if (_panner && _panner->size() > 2) {
-			(*_panner)[2]->get_position (pan_pos);
-			return pan_pos;
-		}
-	}
-	else if (ctrl == Event::PanChannel4) {
-		if (_panner && _panner->size() > 3) {
-			(*_panner)[3]->get_position (pan_pos);
-			return pan_pos;
-		}
-	}
-	else if (ctrl == Event::ChannelCount) {
-		return (float) _chan_count;
-	}
-	
-	return 0.0f;
+}
+else if (ctrl == Event::ChannelCount) {
+	return (float) _chan_count;
+}
+
+return 0.0f;
 }
 
 void Looper::set_port (ControlPort n, float val)
 {
-	switch (n)
-	{
-	case DryLevel:
-		_target_dry = val;
-		break;
-	case RelativeSync:
-		_relative_sync = val;
-		break;
-	case Event::ReplaceQuantized:
-		set_replace_quantized(val > 0.0f ? true : false);
-		break;
-	case TempoInput:
-		if (_tempo_stretch && ports[CycleLength] != 0.0f) {
-			// new ratio is origtempo/newtempo
-		        double tempo = (30.0 * ports[EighthPerCycleLoop] / ports[CycleLength]);
-			//cerr << "tempo calc: " << tempo << " tempo input: " << val << endl;
-			// clamp it if close to the same
-			tempo = (abs(tempo-val) < 0.001) ? val: tempo;
-			double newratio = min(4.0, max(0.5, tempo / (double) val)); 
-			_pending_stretch_ratio = newratio;
-			_pending_stretch = true;
-		}
-		// fallthrough intentional
-	default:
-		ports[n] = val;
-		break;
+switch (n)
+{
+case DryLevel:
+	_target_dry = val;
+	break;
+case RelativeSync:
+	_relative_sync = val;
+	break;
+case Event::ReplaceQuantized:
+	set_replace_quantized(val > 0.0f ? true : false);
+	break;
+case TempoInput:
+	if (_tempo_stretch && ports[CycleLength] != 0.0f) {
+		// new ratio is origtempo/newtempo
+					double tempo = (30.0 * ports[EighthPerCycleLoop] / ports[CycleLength]);
+		//cerr << "tempo calc: " << tempo << " tempo input: " << val << endl;
+		// clamp it if close to the same
+		tempo = (abs(tempo-val) < 0.001) ? val: tempo;
+		double newratio = min(4.0, max(0.5, tempo / (double) val)); 
+		_pending_stretch_ratio = newratio;
+		_pending_stretch = true;
 	}
+	// fallthrough intentional
+default:
+	ports[n] = val;
+	break;
+}
 }
 
 
 bool 
 Looper::is_longpress (int cmd)
 {
-	if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND) {
+if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND) {
 
-		return (_down_stamps[cmd] > 0 && _running_frames > (_down_stamps[cmd] + _longpress_frames));
-	}
-	return false;
+	return (_down_stamps[cmd] > 0 && _running_frames > (_down_stamps[cmd] + _longpress_frames));
+}
+return false;
 }
 
 
 void
 Looper::do_event (Event *ev)
 {
-	if (ev->Type == Event::type_cmd_hit) {
-		Event::command_t cmd = ev->Command;
+if (ev->Type == Event::type_cmd_hit) {
+	Event::command_t cmd = ev->Command;
+	requested_cmd = cmd;
+	request_pending = true;
+							//fprintf(stderr, "Got HIT cmd: %d\n", cmd);
+
+	// a few special commands have double-tap logic
+	if (cmd == Event::RECORD_OR_OVERDUB || cmd == Event::RECORD_OR_OVERDUB_EXCL || cmd == Event::RECORD_OR_OVERDUB_SOLO) {
+		if (_down_stamps[cmd] > 0 && _running_frames < (_down_stamps[cmd] + _doubletap_frames))
+		{
+			// we actually need to undo twice!
+			requested_cmd = Event::UNDO_TWICE; 
+		}
+		_down_stamps[cmd] = _running_frames;
+	}
+}
+else if (ev->Type == Event::type_cmd_down)
+{
+	Event::command_t cmd = ev->Command;
+	if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND) {
 		requested_cmd = cmd;
 		request_pending = true;
-                //fprintf(stderr, "Got HIT cmd: %d\n", cmd);
+
+											// fprintf(stderr, "Got DOWN cmd: %d\n", cmd);
 
 		// a few special commands have double-tap logic
 		if (cmd == Event::RECORD_OR_OVERDUB || cmd == Event::RECORD_OR_OVERDUB_EXCL || cmd == Event::RECORD_OR_OVERDUB_SOLO) {
@@ -811,357 +846,371 @@ Looper::do_event (Event *ev)
 				// we actually need to undo twice!
 				requested_cmd = Event::UNDO_TWICE; 
 			}
-			_down_stamps[cmd] = _running_frames;
 		}
-	}
-	else if (ev->Type == Event::type_cmd_down)
-	{
-		Event::command_t cmd = ev->Command;
-		if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND) {
-			requested_cmd = cmd;
-			request_pending = true;
-
-                        // fprintf(stderr, "Got DOWN cmd: %d\n", cmd);
-
-			// a few special commands have double-tap logic
-			if (cmd == Event::RECORD_OR_OVERDUB || cmd == Event::RECORD_OR_OVERDUB_EXCL || cmd == Event::RECORD_OR_OVERDUB_SOLO) {
-				if (_down_stamps[cmd] > 0 && _running_frames < (_down_stamps[cmd] + _doubletap_frames))
-				{
-					// we actually need to undo twice!
-					requested_cmd = Event::UNDO_TWICE; 
-				}
-			}
-			
-			_down_stamps[cmd] = _running_frames;
-		}
-	}
-	else if (ev->Type == Event::type_cmd_up || ev->Type == Event::type_cmd_upforce)
-	{
-		// do if release after long press, but not if already in Play
 		
-		Event::command_t cmd = ev->Command;
-		if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND)
-		{
-
-                        if (ports[State] != LooperStatePlaying
-			    || cmd == Event::REVERSE || cmd == Event::DELAY || cmd == Event::UNDO || cmd == Event::REDO)
-			{
-				
-				if (ev->Type == Event::type_cmd_upforce) {
-					// special case if current state is mult or insert
-					// and the cmd is mult or insert and we're not quantized
-					// a SUS action here really means an unrounded action
-					if (ports[Quantize] == 0.0f
-					    && ((ports[State] == LooperStateMultiplying && cmd == Event::MULTIPLY)
-						|| (ports[State] == LooperStateInserting && cmd == Event::INSERT)))
-					{
-						// this really should be handled down in the plugin
-						cmd = Event::RECORD;
-					}
-					
-					//cerr << "force up" << endl;
-					
-					requested_cmd = cmd;
-					request_pending = true;
-
-				}
-				else if (_down_stamps[cmd] > 0 && _running_frames > (_down_stamps[cmd] + _longpress_frames))
-				{
-					//cerr << "long up" << endl;
-					requested_cmd = cmd;
-					request_pending = true;
-
-					// long press undo and redo become their -all versions
-					if (cmd == Event::UNDO) {
-						requested_cmd = Event::UNDO_ALL;
-					}
-					else if (cmd == Event::REDO) {
-						requested_cmd = Event::REDO_ALL;
-					}
-					else if (cmd == Event::RECORD_OR_OVERDUB || cmd == Event::RECORD_OR_OVERDUB_EXCL || cmd == Event::RECORD_OR_OVERDUB_SOLO || Event::RECORD_OVERDUB_END_SOLO) {
-						// longpress of this turns into undo all for one-button goodness
-						requested_cmd = Event::UNDO_ALL;
-					}
-				}
-			}
-			//fprintf(stderr, "Got UP cmd: %d  req: %d\n", cmd, requested_cmd);
-			_down_stamps[cmd] = 0;
-		}
+		_down_stamps[cmd] = _running_frames;
 	}
-	else if (ev->Type == Event::type_control_change)
-	{
-		// todo: specially handle TriggerThreshold to work across all channels
-		
-		if ((int)ev->Control >= (int)Event::TriggerThreshold && (int)ev->Control < (int) Event::State) {
-
-			if (ev->Control == Event::Rate) {
-				// uses
-				_src_in_ratio = (double) max (MinResamplingRate, min ((double)ev->Value, MaxResamplingRate));
-				_src_out_ratio = (double) 1.0 / max (MinResamplingRate, min ((double) ev->Value, MaxResamplingRate));
-				src_set_ratio (_insync_src_state, _src_in_ratio);
-				src_set_ratio (_outsync_src_state, _src_out_ratio);
-
-				for (unsigned int i=0; i < _chan_count; ++i)
-				{
-					src_set_ratio (_in_src_states[i], _src_in_ratio);
-					src_set_ratio (_out_src_states[i], _src_out_ratio);
-
-					// set lp cutoff at adjusted SR/2
-					_lp_filter[i]->set_cutoff (_src_in_ratio * _lp_filter[i]->get_samplerate() * 0.48);
-				}
-			}
+}
+else if (ev->Type == Event::type_cmd_up || ev->Type == Event::type_cmd_upforce)
+{
+	// do if release after long press, but not if already in Play
 	
-			switch (ev->Control) 
-			{
-			case Event::DryLevel:
-				_target_dry = ev->Value;
-				break;
-			case  Event::Quantize:
-				ev->Value = roundf(ev->Value);
-				// passthru is intentional
-			default:
-				ports[ev->Control] = ev->Value;
-				//cerr << "set port " << ev->Control << "  to: " << ev->Value << endl;
-				break;
-			}
+	Event::command_t cmd = ev->Command;
+	if ((int) cmd >= 0 && (int) cmd < (int) Event::LAST_COMMAND)
+	{
+
+											if (ports[State] != LooperStatePlaying
+				|| cmd == Event::REVERSE || cmd == Event::DELAY || cmd == Event::UNDO || cmd == Event::REDO)
+		{
 			
-		}
-		else if (ev->Control == Event::InputGain)
-		{
-			_targ_input_gain = ev->Value;
-		}
-		else if (ev->Control == Event::RelativeSync)
-		{
-			_relative_sync = ev->Value > 0.0f;
-		}
-		else if (ev->Control == Event::UseCommonIns) 
-		{
-			_use_common_ins = ev->Value > 0.0f;
-		}
-		else if (ev->Control == Event::UseCommonOuts) 
-		{
-			_use_common_outs = ev->Value > 0.0f;
-		}
-		else if (ev->Control == Event::AutosetLatency) 
-		{
-			_auto_latency = ev->Value > 0.0f;
-			recompute_latencies();
-		}
-		else if (ev->Control == Event::PanChannel1) {
-			if (_panner && _panner->size() > 0) {
-				(*_panner)[0]->set_position (ev->Value);
+			if (ev->Type == Event::type_cmd_upforce) {
+				// special case if current state is mult or insert
+				// and the cmd is mult or insert and we're not quantized
+				// a SUS action here really means an unrounded action
+				if (ports[Quantize] == 0.0f
+						&& ((ports[State] == LooperStateMultiplying && cmd == Event::MULTIPLY)
+					|| (ports[State] == LooperStateInserting && cmd == Event::INSERT)))
+				{
+					// this really should be handled down in the plugin
+					cmd = Event::RECORD;
+				}
+				
+				//cerr << "force up" << endl;
+				
+				requested_cmd = cmd;
+				request_pending = true;
+
+			}
+			else if (_down_stamps[cmd] > 0 && _running_frames > (_down_stamps[cmd] + _longpress_frames))
+			{
+				//cerr << "long up" << endl;
+				requested_cmd = cmd;
+				request_pending = true;
+
+				// long press undo and redo become their -all versions
+				if (cmd == Event::UNDO) {
+					requested_cmd = Event::UNDO_ALL;
+				}
+				else if (cmd == Event::REDO) {
+					requested_cmd = Event::REDO_ALL;
+				}
+				else if (cmd == Event::RECORD_OR_OVERDUB || cmd == Event::RECORD_OR_OVERDUB_EXCL || cmd == Event::RECORD_OR_OVERDUB_SOLO || Event::RECORD_OVERDUB_END_SOLO) {
+					// longpress of this turns into undo all for one-button goodness
+					requested_cmd = Event::UNDO_ALL;
+				}
 			}
 		}
-		else if (ev->Control == Event::PanChannel2) {
-			if (_panner && _panner->size() > 1) {
-				(*_panner)[1]->set_position (ev->Value);
+		//fprintf(stderr, "Got UP cmd: %d  req: %d\n", cmd, requested_cmd);
+		_down_stamps[cmd] = 0;
+	}
+}
+else if (ev->Type == Event::type_control_change)
+{
+	// todo: specially handle TriggerThreshold to work across all channels
+	
+	if ((int)ev->Control >= (int)Event::TriggerThreshold && (int)ev->Control < (int) Event::State) {
+
+		if (ev->Control == Event::Rate) {
+			// uses
+			_src_in_ratio = (double) max (MinResamplingRate, min ((double)ev->Value, MaxResamplingRate));
+			_src_out_ratio = (double) 1.0 / max (MinResamplingRate, min ((double) ev->Value, MaxResamplingRate));
+			src_set_ratio (_insync_src_state, _src_in_ratio);
+			src_set_ratio (_outsync_src_state, _src_out_ratio);
+
+			for (unsigned int i=0; i < _chan_count; ++i)
+			{
+				src_set_ratio (_in_src_states[i], _src_in_ratio);
+				src_set_ratio (_out_src_states[i], _src_out_ratio);
+
+				// set lp cutoff at adjusted SR/2
+				_lp_filter[i]->set_cutoff (_src_in_ratio * _lp_filter[i]->get_samplerate() * 0.48);
 			}
 		}
-		else if (ev->Control == Event::PanChannel3) {
-			if (_panner && _panner->size() > 2) {
-				(*_panner)[2]->set_position (ev->Value);
-			}
+
+		switch (ev->Control) 
+		{
+		case Event::DryLevel:
+			_target_dry = ev->Value;
+			break;
+		case  Event::Quantize:
+			ev->Value = roundf(ev->Value);
+			// passthru is intentional
+		default:
+			ports[ev->Control] = ev->Value;
+			//cerr << "set port " << ev->Control << "  to: " << ev->Value << endl;
+			break;
 		}
-		else if (ev->Control == Event::PanChannel4) {
-			if (_panner && _panner->size() > 3) {
-				(*_panner)[3]->set_position (ev->Value);
-			}
+		
+	}
+	else if (ev->Control == Event::InputGain)
+	{
+		_targ_input_gain = ev->Value;
+	}
+	else if (ev->Control == Event::RelativeSync)
+	{
+		_relative_sync = ev->Value > 0.0f;
+	}
+	else if (ev->Control == Event::UseCommonIns) 
+	{
+		_use_common_ins = ev->Value > 0.0f;
+	}
+	else if (ev->Control == Event::UseCommonOuts) 
+	{
+		_use_common_outs = ev->Value > 0.0f;
+	}
+	else if (ev->Control == Event::AutosetLatency) 
+	{
+		_auto_latency = ev->Value > 0.0f;
+		recompute_latencies();
+	}
+	else if (ev->Control == Event::PanChannel1) {
+		if (_panner && _panner->size() > 0) {
+			(*_panner)[0]->set_position (ev->Value);
 		}
-		else if (ev->Control == Event::ReplaceQuantized) {
-			set_replace_quantized(ev->Value > 0.0f ? true : false);
+	}
+	else if (ev->Control == Event::PanChannel2) {
+		if (_panner && _panner->size() > 1) {
+			(*_panner)[1]->set_position (ev->Value);
 		}
-		else if (ev->Control == Event::PitchShift) {
-			_pitch_shift = ev->Value; // in semitones
-			_out_stretcher->setPitchScale(pow(2.0, _pitch_shift / 12.0));
+	}
+	else if (ev->Control == Event::PanChannel3) {
+		if (_panner && _panner->size() > 2) {
+			(*_panner)[2]->set_position (ev->Value);
 		}
-		else if (ev->Control == Event::StretchRatio) {
-			_pending_stretch_ratio = min(4.0, max(0.25, (double) ev->Value)); 
+	}
+	else if (ev->Control == Event::PanChannel4) {
+		if (_panner && _panner->size() > 3) {
+			(*_panner)[3]->set_position (ev->Value);
+		}
+	}
+	else if (ev->Control == Event::ReplaceQuantized) {
+		set_replace_quantized(ev->Value > 0.0f ? true : false);
+	}
+	else if (ev->Control == Event::PitchShift) {
+		_pitch_shift = ev->Value; // in semitones
+		_out_stretcher->setPitchScale(pow(2.0, _pitch_shift / 12.0));
+	}
+	else if (ev->Control == Event::StretchRatio) {
+		_pending_stretch_ratio = min(4.0, max(0.25, (double) ev->Value)); 
+		_pending_stretch = true;
+	}
+	else if (ev->Control == Event::TempoStretch) {
+		_tempo_stretch = ev->Value > 0.0; 
+		if (_tempo_stretch && ports[CycleLength] != 0.0f) {
+			double tempo = (30.0 * ports[EighthPerCycleLoop] / ports[CycleLength]);
+			//cerr << "tempo calc: " << tempo << endl;
+			// clamp it if close to the same
+			tempo = (abs(tempo-ports[TempoInput]) < 0.001) ? ports[TempoInput]: tempo;
+			_pending_stretch_ratio = min(4.0, max(0.5, (double) tempo / ports[TempoInput])); 
 			_pending_stretch = true;
 		}
-		else if (ev->Control == Event::TempoStretch) {
-			_tempo_stretch = ev->Value > 0.0; 
-			if (_tempo_stretch && ports[CycleLength] != 0.0f) {
-				double tempo = (30.0 * ports[EighthPerCycleLoop] / ports[CycleLength]);
-				//cerr << "tempo calc: " << tempo << endl;
-				// clamp it if close to the same
-				tempo = (abs(tempo-ports[TempoInput]) < 0.001) ? ports[TempoInput]: tempo;
-				_pending_stretch_ratio = min(4.0, max(0.5, (double) tempo / ports[TempoInput])); 
-				_pending_stretch = true;
+	}
+
+}
+
+//shadow the plugin in what it does to the audio and reproduce in the audio profile
+//here we just prepare the profile as much as possible before run_loops actually inserts the data
+if (request_pending) {
+	int state = ports[State];
+	switch(requested_cmd) {
+		case Event::RECORD:
+			if (state != LooperStateRecording && state != LooperStateMultiplying && state != LooperStateInserting) {
+				_ap_undo_state++;
+				_audio_profile[_ap_undo_state].clear();
+			} else if (state == LooperStateInserting) {
+				// doing an unrounded end to insert
+				// not sure if should be silencing here
+				// also, plugin behaves strangely when doing and unrounded insert within cycle time
+				// not sure if this needs be fixed in plugin or shadowed here
+				_silence_insert = true;
 			}
-		}
-
-	}
-
-	//shadow the plugin in what it does to the audio and reproduce in the audio profile
-	//here we just prepare the profile as much as possible before run_loops actually inserts the data
-	if (request_pending) {
-		int state = ports[State];
-		switch(requested_cmd) {
-			case Event::RECORD:
-				if (state != LooperStateRecording) {
-					_ap_undo_state++;
-					_audio_profile[_ap_undo_state].clear();
+			break;
+		case Event::RECORD_OR_OVERDUB:
+			if (ports[LoopLength] == 0.0) {
+				_ap_undo_state++;
+				_audio_profile[_ap_undo_state].clear();
+			} else if (state != LooperStateOverdubbing) {
+				_ap_undo_state++;
+			}
+			break;
+		case Event::OVERDUB:
+			if (state != LooperStateOverdubbing) {
+				_ap_undo_state++;
+				_overdub_profile.clear();
+				_orig_profile.clear();
+				_orig_profile = _audio_profile[_ap_undo_state - 1];
+			}
+			break;
+		case Event::MULTIPLY:
+			if (state != LooperStateMultiplying) {
+				_ap_undo_state++;
+				_audio_profile[_ap_undo_state].clear();
+				_overdub_profile.clear();
+				_orig_profile.clear();
+				for (unsigned int i=0; i < _chan_count; ++i) {
+					_audio_profile[_ap_undo_state][i].insert(_audio_profile[_ap_undo_state - 1][i].begin(),_audio_profile[_ap_undo_state - 1][i].find(round(ports[CycleLength] * 100)));
 				}
-				break;
-			case Event::RECORD_OR_OVERDUB:
-				if (ports[LoopLength] == 0.0) {
-					_ap_undo_state++;
-					_audio_profile[_ap_undo_state].clear();
-				} else if (state != LooperStateOverdubbing) {
-					_ap_undo_state++;
-				}
-				break;
-			case Event::OVERDUB:
-				if (state != LooperStateOverdubbing) {
-					_ap_undo_state++;
-					_overdub_profile.clear();
-					_audio_profile[_ap_undo_state] = _audio_profile[_ap_undo_state - 1];
-				}
-				break;
-			case Event::INSERT:
-				//copy the data before the sample at which insert was called to the new undo state
-				//hold the rest until finished with insert to add on to the end
-				if (state != LooperStateInserting) {
-					unsigned int ap_sample = round(ports[LoopPosition] * 100) + 1;
+				_orig_profile = _audio_profile[_ap_undo_state];
+			}
+			//add remaining original loop back to the end of the new multiplied loop
+			//mult_its should already be at the last sample added back from the original loop
+			else {
+				if (ports[LoopLength] > ports[CycleLength]) {
 					for (unsigned int i=0; i < _chan_count; ++i) {
-						AudioProfile::iterator insert_iter = _audio_profile[_ap_undo_state][i].find(ap_sample);
-						_audio_profile[_ap_undo_state+1][i].insert(_audio_profile[_ap_undo_state][i].begin(),insert_iter);
-						_after_insert_profile[i].insert(insert_iter,_audio_profile[_ap_undo_state][i].end());	
+						int ap_size = _audio_profile[_ap_undo_state][i].size() - 1;
+						for (;_mult_its[i] != _orig_profile[i].end();++_mult_its[i]) {
+							_audio_profile[_ap_undo_state][i][(*_mult_its[i]).first + ap_size] = (*_mult_its[i]).second;
+						}
 					}
-					_ap_undo_state++;
-					_silence_insert = false;
-				} else {
-					_silence_insert = true;
 				}
-				break;
-			case Event::UNDO:
+			}
+			break;
+		case Event::INSERT:
+			//copy the data before the sample at which insert was called to the new undo state
+			//hold the rest until finished with insert to add on to the end
+			if (state != LooperStateInserting) {
+				_ap_undo_state++;
+				_audio_profile[_ap_undo_state].clear();
+				_after_insert_profile.clear();
+				unsigned int ap_sample = round(ports[LoopPosition] * 100) + 1;
+				for (unsigned int i=0; i < _chan_count; ++i) {
+					AudioProfile::iterator insert_iter = _audio_profile[_ap_undo_state - 1][i].find(ap_sample);
+					_audio_profile[_ap_undo_state][i].insert(_audio_profile[_ap_undo_state - 1][i].begin(),insert_iter);
+					_after_insert_profile[i].insert(insert_iter,_audio_profile[_ap_undo_state - 1][i].end());	
+				}
+				_silence_insert = false;
+			} else {
+				_silence_insert = true;
+			}
+			break;
+		case Event::UNDO:
+			_ap_undo_state--;
+			break;
+		case Event::UNDO_TWICE:
+			_ap_undo_state--;
+			if (_ap_undo_state > 0)
 				_ap_undo_state--;
-				break;
-			case Event::UNDO_TWICE:
-				_ap_undo_state--;
-				if (_ap_undo_state > 0)
-					_ap_undo_state--;
-				break;
-			case Event::REDO:
-				if (!_audio_profile[_ap_undo_state+1][0].empty())
-					_ap_undo_state++;
-				break;
-			case Event::UNDO_ALL:
-				_ap_undo_state = 0;
-				break;
-		} 
-	}
+			break;
+		case Event::REDO:
+			if (!_audio_profile[_ap_undo_state+1][0].empty())
+				_ap_undo_state++;
+			break;
+		case Event::UNDO_ALL:
+			_ap_undo_state = 0;
+			break;
+	} 
+}
 
-	//cerr << "profile state:" << _ap_undo_state << endl;
+//cerr << "profile state:" << _ap_undo_state << endl;
 
-	// todo other stuff
+// todo other stuff
 }
 
 
 void
 Looper::run (nframes_t offset, nframes_t nframes)
 {
-	// this is the audio thread
+// this is the audio thread
 
-	TentativeLockMonitor lm (_loop_lock, __LINE__, __FILE__);
-	
-	if (!lm.locked()) {
+TentativeLockMonitor lm (_loop_lock, __LINE__, __FILE__);
 
-		// treat as bypassed
-		if (_have_discrete_io) {
-			for (unsigned int i=0; i < _chan_count; ++i)
-			{
-				sample_t * inbuf = _driver->get_input_port_buffer (_input_ports[i], _buffersize);
-				sample_t * outbuf = _driver->get_output_port_buffer (_output_ports[i], _buffersize);
-				if (inbuf && outbuf) {
-					for (nframes_t n=0; n < nframes; ++n) {
-						outbuf[n] = flush_to_zero (inbuf[n] * _curr_dry * _curr_input_gain);
-					}
+if (!lm.locked()) {
+
+	// treat as bypassed
+	if (_have_discrete_io) {
+		for (unsigned int i=0; i < _chan_count; ++i)
+		{
+			sample_t * inbuf = _driver->get_input_port_buffer (_input_ports[i], _buffersize);
+			sample_t * outbuf = _driver->get_output_port_buffer (_output_ports[i], _buffersize);
+			if (inbuf && outbuf) {
+				for (nframes_t n=0; n < nframes; ++n) {
+					outbuf[n] = flush_to_zero (inbuf[n] * _curr_dry * _curr_input_gain);
 				}
 			}
 		}
-		
-		return;
 	}
-
-	_running_frames += nframes;
 	
-	if (request_pending) {
+	return;
+}
 
-		if (ports[Multi] == requested_cmd) {
-			/* defer till next call */
-			ports[Multi] = -1;
-                        //fprintf(stderr,"Deferred to next run\n");
-		} else {
-			ports[Multi] = requested_cmd;
-			request_pending = false;
-                        //fprintf(stderr,"Requested mode: %d\n", requested_cmd);
-                         
-			if (requested_cmd == Event::RECORD && ports[State] != LooperStateRecording) {
-				// record cmd, lets reset stretch and pitch ratios to 1 always
-				_pending_stretch_ratio = _stretch_ratio = 1.0;
-				_pending_stretch = true;
-				_pitch_shift = 0.0;
-				_out_stretcher->setPitchScale(pow(2.0, _pitch_shift / 12.0));
-			}
-		}
+_running_frames += nframes;
 
-	} else if (ports[Multi] >= 0) {
+if (request_pending) {
+
+	if (ports[Multi] == requested_cmd) {
+		/* defer till next call */
 		ports[Multi] = -1;
-                //fprintf(stderr,"Reset to -1\n");
-		//cerr << "reset to -1\n";
-	}
-
-	// deal with any pending stretch ratio change from non-rt context
-	if (_pending_stretch) {
-		double newratio = _pending_stretch_ratio;
-		if (_stretch_ratio == 1.0 && newratio != 1.0)
-		{
-			_in_stretcher->reset();
-			_out_stretcher->reset();
+											//fprintf(stderr,"Deferred to next run\n");
+	} else {
+		ports[Multi] = requested_cmd;
+		request_pending = false;
+											//fprintf(stderr,"Requested mode: %d\n", requested_cmd);
+											 
+		if (requested_cmd == Event::RECORD && ports[State] != LooperStateRecording) {
+			// record cmd, lets reset stretch and pitch ratios to 1 always
+			_pending_stretch_ratio = _stretch_ratio = 1.0;
+			_pending_stretch = true;
+			_pitch_shift = 0.0;
+			_out_stretcher->setPitchScale(pow(2.0, _pitch_shift / 12.0));
 		}
-		_stretch_ratio = newratio;
-		_in_stretcher->setTimeRatio(1.0/_stretch_ratio);
-		_out_stretcher->setTimeRatio(_stretch_ratio);
-		_pending_stretch = false;
-		recompute_latencies();
 	}
 
-	LADSPA_Data oldsync = ports[Sync];
-	// ignore sync if we are using our own syncin/outbuf
-	if (_use_sync_buf == _our_syncin_buf || _use_sync_buf == _our_syncout_buf) {
-		ports[Sync] = 0.0f;
-		_slave_sync_port = 1.0f;
-	}
-	else if (_relative_sync && ports[Sync] > 0.0f) {
-		// used for recSync relative mode
-		ports[Sync] = 2.0f;
-		_slave_sync_port = 2.0;
-	}
-	else {
-		_slave_sync_port = 1.0;
-	}
+} else if (ports[Multi] >= 0) {
+	ports[Multi] = -1;
+							//fprintf(stderr,"Reset to -1\n");
+	//cerr << "reset to -1\n";
+}
 
-	// do fixed peak meter falloff
-	_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
-	_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
-	
-	
-	
-	run_loops (offset, nframes);
+// deal with any pending stretch ratio change from non-rt context
+if (_pending_stretch) {
+	double newratio = _pending_stretch_ratio;
+	if (_stretch_ratio == 1.0 && newratio != 1.0)
+	{
+		_in_stretcher->reset();
+		_out_stretcher->reset();
+	}
+	_stretch_ratio = newratio;
+	_in_stretcher->setTimeRatio(1.0/_stretch_ratio);
+	_out_stretcher->setTimeRatio(_stretch_ratio);
+	_pending_stretch = false;
+	recompute_latencies();
+}
+
+LADSPA_Data oldsync = ports[Sync];
+// ignore sync if we are using our own syncin/outbuf
+if (_use_sync_buf == _our_syncin_buf || _use_sync_buf == _our_syncout_buf) {
+	ports[Sync] = 0.0f;
+	_slave_sync_port = 1.0f;
+}
+else if (_relative_sync && ports[Sync] > 0.0f) {
+	// used for recSync relative mode
+	ports[Sync] = 2.0f;
+	_slave_sync_port = 2.0;
+}
+else {
+	_slave_sync_port = 1.0;
+}
+
+// do fixed peak meter falloff
+_input_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_input_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
+_output_peak = flush_to_zero (f_clamp (DB_CO (CO_DB(_output_peak) - nframes * _falloff_per_sample), 0.0f, 20.0f));
+
+
+
+run_loops (offset, nframes);
 /*
-	if (ports[Rate] == 1.0f) {
-		run_loops (offset, nframes);
-	}
-	else {
+if (ports[Rate] == 1.0f) {
+	run_loops (offset, nframes);
+}
+else {
 #ifdef HAVE_SAMPLERATE
-		run_loops_resampled (offset, nframes);
+	run_loops_resampled (offset, nframes);
 #else
-		run_loops (offset, nframes);
+	run_loops (offset, nframes);
 #endif		
-	}
+}
 */	
-	ports[Sync] = oldsync;
+ports[Sync] = oldsync;
 }
 
 
@@ -1169,134 +1218,153 @@ nframes_t samples_passed[2] = {0,0};
 void
 Looper::run_loops (nframes_t offset, nframes_t nframes)
 {
-	//LADSPA_Data * inbuf = 0 , *outbuf = 0, *real_inbuf = 0;
-	nframes_t alt_frames = nframes;
-	float currdry = _curr_dry;
-	float curr_ing = _curr_input_gain;
-	float ing_delta = flush_to_zero (_targ_input_gain - _curr_input_gain) / max((nframes_t) 1, (nframes - 1));
-	float dry_delta = flush_to_zero (_target_dry - _curr_dry) / max((nframes_t) 1, (nframes - 1));
-	bool  resampled = ports[Rate] != 1.0f;
-	bool  stretched = _stretch_ratio != 1.0;
-	bool  pitched = _pitch_shift != 0.0;
+//LADSPA_Data * inbuf = 0 , *outbuf = 0, *real_inbuf = 0;
+nframes_t alt_frames = nframes;
+float currdry = _curr_dry;
+float curr_ing = _curr_input_gain;
+float ing_delta = flush_to_zero (_targ_input_gain - _curr_input_gain) / max((nframes_t) 1, (nframes - 1));
+float dry_delta = flush_to_zero (_target_dry - _curr_dry) / max((nframes_t) 1, (nframes - 1));
+bool  resampled = ports[Rate] != 1.0f;
+bool  stretched = _stretch_ratio != 1.0;
+bool  pitched = _pitch_shift != 0.0;
 
-	if (resampled) {
-		_src_data.end_of_input = 0;
-		
-		// resample input audio and sync using Rate
-		_src_data.src_ratio = _src_in_ratio;
-		_src_data.input_frames = nframes;
-		_src_data.output_frames = (long) ceil (nframes * _src_in_ratio);
-		
-		// sync input
-		_src_data.data_in = _use_sync_buf + offset;
-		_src_data.data_out = _src_sync_buffer;
-		src_process (_insync_src_state, &_src_data);
-		
-		alt_frames = _src_data.output_frames_gen;
-	}
-
-	// get common outputs
-	size_t comnouts = _driver->get_engine()->get_common_output_count();
-	sample_t* com_obufs[comnouts];
-	for (size_t n=0; n < comnouts; ++n) {
-		
-		com_obufs[n] = _driver->get_engine()->get_common_output_buffer (n);
-		if (com_obufs[n]) {
-			com_obufs[n] += offset;
-		}
-	}
-
-	// input bufs
-	sample_t* inbufs[_chan_count];
-	sample_t* real_inbufs[_chan_count];
-	sample_t* outbufs[_chan_count];
+if (resampled) {
+	_src_data.end_of_input = 0;
 	
+	// resample input audio and sync using Rate
+	_src_data.src_ratio = _src_in_ratio;
+	_src_data.input_frames = nframes;
+	_src_data.output_frames = (long) ceil (nframes * _src_in_ratio);
+	
+	// sync input
+	_src_data.data_in = _use_sync_buf + offset;
+	_src_data.data_out = _src_sync_buffer;
+	src_process (_insync_src_state, &_src_data);
+	
+	alt_frames = _src_data.output_frames_gen;
+}
 
-	for (unsigned int i=0; i < _chan_count; ++i)
-	{
-		inbufs[i] = 0;
-		real_inbufs[i] = 0;
-		outbufs[i] = 0;
+// get common outputs
+size_t comnouts = _driver->get_engine()->get_common_output_count();
+sample_t* com_obufs[comnouts];
+for (size_t n=0; n < comnouts; ++n) {
+	
+	com_obufs[n] = _driver->get_engine()->get_common_output_buffer (n);
+	if (com_obufs[n]) {
+		com_obufs[n] += offset;
+	}
+}
 
-		/* (re)connect audio ports */
-		if (_have_discrete_io) {
-			real_inbufs[i] = (LADSPA_Data*) _driver->get_input_port_buffer (_input_ports[i], _buffersize);
-			if (real_inbufs[i]) {
-				real_inbufs[i] += offset;
-			}
-			inbufs[i] = real_inbufs[i];
-			
-			outbufs[i] = (LADSPA_Data*) _driver->get_output_port_buffer (_output_ports[i], _buffersize);
-			if (outbufs[i]) {
-				outbufs[i] += offset;
-			} else {
-				outbufs[i] = _tmp_io_bufs[i];
-			}
+// input bufs
+sample_t* inbufs[_chan_count];
+sample_t* real_inbufs[_chan_count];
+sample_t* outbufs[_chan_count];
+
+
+for (unsigned int i=0; i < _chan_count; ++i)
+{
+	inbufs[i] = 0;
+	real_inbufs[i] = 0;
+	outbufs[i] = 0;
+
+	/* (re)connect audio ports */
+	if (_have_discrete_io) {
+		real_inbufs[i] = (LADSPA_Data*) _driver->get_input_port_buffer (_input_ports[i], _buffersize);
+		if (real_inbufs[i]) {
+			real_inbufs[i] += offset;
 		}
-		else {
-			inbufs[i] = 0;
+		inbufs[i] = real_inbufs[i];
+		
+		outbufs[i] = (LADSPA_Data*) _driver->get_output_port_buffer (_output_ports[i], _buffersize);
+		if (outbufs[i]) {
+			outbufs[i] += offset;
+		} else {
 			outbufs[i] = _tmp_io_bufs[i];
-			real_inbufs[i] = 0;
 		}
+	}
+	else {
+		inbufs[i] = 0;
+		outbufs[i] = _tmp_io_bufs[i];
+		real_inbufs[i] = 0;
+	}
 
-		if (_use_common_ins || !_have_discrete_io || !real_inbufs[i]) {
-			// mix common input into this buffer
-			sample_t * comin = _driver->get_engine()->get_common_input_buffer(i);			
-			if (comin)
-			{
-				comin += offset;
-				
-				curr_ing = _curr_input_gain;
-
-				if (_have_discrete_io && real_inbufs[i]) {
-					for (nframes_t pos=0; pos < nframes; ++pos) {
-						curr_ing += ing_delta;
-						_tmp_io_bufs[i][pos] = curr_ing * (real_inbufs[i][pos] + comin[pos]);
-					}
-					inbufs[i] = _tmp_io_bufs[i];
-				}
-				else {
-					for (nframes_t pos=0; pos < nframes; ++pos) {
-						curr_ing += ing_delta;
-						
-						_tmp_io_bufs[i][pos] = curr_ing * (comin[pos]);
-					}
-					inbufs[i] = _tmp_io_bufs[i];
-				}
-
-			}
-		}
-		else {
-			// we have discrete and not using common
+	if (_use_common_ins || !_have_discrete_io || !real_inbufs[i]) {
+		// mix common input into this buffer
+		sample_t * comin = _driver->get_engine()->get_common_input_buffer(i);			
+		if (comin)
+		{
+			comin += offset;
+			
 			curr_ing = _curr_input_gain;
-			for (nframes_t pos=0; pos < nframes; ++pos) {
-				curr_ing += ing_delta;
 
-				_tmp_io_bufs[i][pos] = curr_ing * (real_inbufs[i][pos]);
+			if (_have_discrete_io && real_inbufs[i]) {
+				for (nframes_t pos=0; pos < nframes; ++pos) {
+					curr_ing += ing_delta;
+					_tmp_io_bufs[i][pos] = curr_ing * (real_inbufs[i][pos] + comin[pos]);
+				}
+				inbufs[i] = _tmp_io_bufs[i];
 			}
-			inbufs[i] = _tmp_io_bufs[i];
+			else {
+				for (nframes_t pos=0; pos < nframes; ++pos) {
+					curr_ing += ing_delta;
+					
+					_tmp_io_bufs[i][pos] = curr_ing * (comin[pos]);
+				}
+				inbufs[i] = _tmp_io_bufs[i];
+			}
+
 		}
+	}
+	else {
+		// we have discrete and not using common
+		curr_ing = _curr_input_gain;
+		for (nframes_t pos=0; pos < nframes; ++pos) {
+			curr_ing += ing_delta;
+
+			_tmp_io_bufs[i][pos] = curr_ing * (real_inbufs[i][pos]);
+		}
+		inbufs[i] = _tmp_io_bufs[i];
+	}
 
 
-		//get data for the audio profile
-		unsigned int ap_sample = round(ports[LoopPosition] * 100); //100Hz rate and window
-		int state = ports[State];
+	//get data for the audio profile
+	unsigned int ap_sample = round(ports[LoopPosition] * 100); //100Hz rate and window
+	int state = ports[State];
 
-		switch (state) {
-			case LooperStateInserting:
-				if (!_silence_insert) 
-					compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
-				else
-					_audio_profile[_ap_undo_state][i][ap_sample] = 0.0;
-				break;
-			case LooperStateRecording:
+	switch (state) {
+		case LooperStateInserting:
+			if (!_silence_insert) {
 				compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
-				break;
-			case LooperStateOverdubbing:
-				compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
-				_audio_profile[_ap_undo_state][i][ap_sample] *= ports[Feedback];
-				_audio_profile[_ap_undo_state][i][ap_sample] += _overdub_profile[i][ap_sample];
-				break;
+			} else {
+				_audio_profile[_ap_undo_state][i][ap_sample] = 0.0;
+			}
+			_last_ap_sample[i] = _audio_profile[_ap_undo_state][i][ap_sample];
+			break;
+		case LooperStateRecording:
+			compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
+			_last_ap_sample[i] = _audio_profile[_ap_undo_state][i][ap_sample];
+			break;
+		case LooperStateOverdubbing:
+			compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
+			_audio_profile[_ap_undo_state][i][ap_sample] = _overdub_profile[i][ap_sample] + (_orig_profile[i][ap_sample] * ports[Feedback]);
+			_last_ap_sample[i] = _audio_profile[_ap_undo_state][i][ap_sample];
+			break;
+		//case LooperStateOverdubbing:
+		//	compute_min_max(inbufs[i],nframes,_overdub_profile[i][ap_sample]);
+		//	_audio_profile[_ap_undo_state][i][ap_sample] *= ports[Feedback];
+		//	_audio_profile[_ap_undo_state][i][ap_sample] += _overdub_profile[i][ap_sample];
+		//	_last_ap_sample[i] = _audio_profile[_ap_undo_state][i][ap_sample];
+		//	break;
+		case LooperStateMultiplying:
+			cerr << "feedback: " << ports[Feedback] << endl;
+			int orig_size = _orig_profile[i].size();
+			int orig_ratio = ap_sample/orig_size;
+			int orig_sample = ap_sample - (orig_size * orig_ratio);
+			compute_min_max(inbufs[i],nframes,_audio_profile[_ap_undo_state][i][ap_sample]);
+			_audio_profile[_ap_undo_state][i][ap_sample] += (_orig_profile[i][orig_sample] * ports[Feedback]);
+			_mult_its[i] = _orig_profile[i].find(orig_sample);
+			_last_ap_sample[i] = _audio_profile[_ap_undo_state][i][ap_sample];
+			break;
 		}
 		//add the rest of the loop back to the profile after insert
 		if (prev_state == LooperStateInserting && state != LooperStateInserting) {
@@ -1309,6 +1377,7 @@ Looper::run_loops (nframes_t offset, nframes_t nframes)
 				_after_insert_profile.clear();
 			}
 		}
+
 		prev_state = state;
 
 

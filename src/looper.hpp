@@ -196,15 +196,19 @@ class Looper
 	typedef std::map<nframes_t, float> AudioProfile;
 	typedef std::map<int, AudioProfile> AudioProfileChans;
 	typedef std::map<int, AudioProfileChans> AudioProfileStates;
+	typedef std::map<int, AudioProfile::iterator> AudioProfileIterators;
 
 	int _ap_undo_state;
 
 	AudioProfileStates	 _audio_profile;
 	AudioProfileChans    _after_insert_profile;
 	AudioProfileChans    _overdub_profile;
+	AudioProfileChans    _orig_profile;
+	AudioProfileIterators _mult_its;
 
 	int									prev_state;
 	bool                _silence_insert;
+	std::map<int,float> _last_ap_sample;
 	
 	LADSPA_Data         _slave_sync_port;
 	LADSPA_Data         _slave_dummy_port;

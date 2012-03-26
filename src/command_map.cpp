@@ -147,7 +147,8 @@ CommandMap::CommandMap()
 	add_output_control("out_peak_meter", Event::OutPeakMeter, UnitGeneric, 0.0f, 4.0f);
 	add_output_control("is_soloed", Event::IsSoloed, UnitBoolean);
 	add_output_control("out_peak_meter", Event::OutPeakMeter, UnitGeneric, 0.0f, 4.0f);
-	add_output_control("audio_profile", Event::AudioProfile, UnitGeneric, 0.0f, 4.0f);
+	add_output_control("audio_profile1", Event::AudioProfile1, UnitGeneric, 0.0f, 4.0f);
+	add_output_control("audio_profile2", Event::AudioProfile2, UnitGeneric, 0.0f, 4.0f);
 
 	_str_ctrl_map.insert (_output_controls.begin(), _output_controls.end());
 

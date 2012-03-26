@@ -220,7 +220,8 @@ namespace SooperLooper {
 		    // Put all new controls at the end to avoid screwing up the order of existing AU sessions (who store these numbers)
 		    ReplaceQuantized,
 		    SendMidiStartOnTrigger,
-				AudioProfile
+				AudioProfile1,
+				AudioProfile2
 	    } Control;
 	    
 	    int8_t  Instance;
