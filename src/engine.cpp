@@ -1135,11 +1135,13 @@ Engine::do_global_rt_event (Event * ev, nframes_t offset, nframes_t nframes)
 	}
 	else if (ev->Control == Event::SelectPrevLoop)
 	{
+        fprintf(stderr, "select prev loop triggered\n");
 		_selected_loop = _selected_loop > 0 ? _selected_loop - 1 : _rt_instances.size() - 1;
 		_sel_loop_changed = true;
 	}
 	else if (ev->Control == Event::SelectNextLoop)
 	{
+        fprintf(stderr, "select next loop triggered\n");
 		_selected_loop = (_selected_loop + 1) % _rt_instances.size();
 		_sel_loop_changed = true;
 	}
