@@ -718,7 +718,7 @@ LoopControl::pingack_handler(const char *path, const char *types, lo_arg **argv,
 	if (_osc_addr) {
 		lo_address_free(_osc_addr);
 	}
-	_osc_addr = lo_address_new_from_url (hosturl.c_str());
+	_osc_addr = lo_address_new_from_url (_osc_url.c_str());
 
 	if (_engine_id != 0 && _engine_id != uid && uid != 0) {
 		cerr << "new engine ID pingacked us!, re-registering" << endl;
