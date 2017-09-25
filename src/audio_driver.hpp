@@ -50,10 +50,11 @@ struct TransportInfo
 	double bpm;
 	State state;
 // future items
-// 	int32_t		bar;		/**< current bar */
-// 	int32_t		beat;		/**< current beat-within-bar */
-// 	int32_t		tick;		/**< current tick-within-beat */
-// 	double		bar_start_tick;            
+   	int32_t		bar;		/**< current bar */
+   	int32_t		beat;		/**< current beat-within-bar */
+    int32_t     last_beat;
+   	int32_t		tick;		/**< current tick-within-beat */
+//  double		bar_start_tick;            
 	
  	float		beats_per_bar;	/**< time signature "numerator" */
  	float		beat_type;	/**< time signature "denominator" */

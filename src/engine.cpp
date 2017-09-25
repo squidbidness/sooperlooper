@@ -190,6 +190,7 @@ bool Engine::initialize(AudioDriver * driver, int buschans, int port, string pin
 	
 	_internal_sync_buf = new float[driver->get_buffersize()];
 	memset(_internal_sync_buf, 0, sizeof(float) * driver->get_buffersize());
+    cout << driver->get_buffersize() << " buffersize" << endl;
 
 	_falloff_per_sample = 30.0f / driver->get_samplerate(); // 30db per second falloff
 
@@ -2313,6 +2314,9 @@ Engine::calculate_midi_tick (bool rt)
 		_midi_loop_tick = 24;  // ..this can't happen, but quarter note is safe
 }
 
+int32_t last_beat_tempo;
+int32_t last_beat_quater;
+
 
 int
 Engine::generate_sync (nframes_t offset, nframes_t nframes)
@@ -2536,17 +2540,25 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				//fprintf(stderr, "pos: %lu   lastpos: %lu  tempoframe: %g  thisval: %lu  nextval: %lu\n", info.framepos , info.last_framepos, _tempo_frames, thisval, nextval);
 				
 				if (info.framepos < info.last_framepos) {
-					//fprintf(stderr,"framepos discontinuity!  setting samples since sync to : %lu   last: %lu \n",info.framepos + offset, info.last_framepos);
+					fprintf(stderr,"framepos discontinuity!  setting samples since sync to : %lu   last: %lu \n",info.framepos + offset, info.last_framepos);
 					for (Instances::iterator i = _rt_instances.begin(); i != _rt_instances.end(); ++i) {
 						(*i)->set_samples_since_sync(info.framepos + offset);
 					}
  
 				}
 
+                //cout << (offset + diff) << " " << thisval << " " << nextval << " " << sizeof(_internal_sync_buf) << endl;
+
 				if ((thisval == 0 || nextval <= thisval) && diff < nframes) {
-					//cerr << "got tempo frame in this cycle: diff: " << diff << endl;
-					_internal_sync_buf[offset + diff]  = 2.0;
+				   //cerr << "+++got tempo frame in this cycle: diff: " << diff << endl;
+			       //_internal_sync_buf[offset + diff]  = 2.0;
 				}
+
+               if(info.beat != last_beat_tempo) {
+                   //cout << "---beat for tempo frame " << diff << " " << thisval << " " << endl;
+                   last_beat_tempo = info.beat;
+			       _internal_sync_buf[0]  = 2.0;
+               }
 			}
 
 			if (_quarter_note_frames > 0.0 && info.state == TransportInfo::ROLLING) {
@@ -2556,11 +2568,21 @@ Engine::generate_sync (nframes_t offset, nframes_t nframes)
 				diff = (thisval == 0) ? 0 : diff;
 
 				//cerr << "pos: " << info.framepos << "  qframes: " << _quarter_note_frames << "  this: " << thisval << "  next: " << nextval << endl;
+
+                //cout << "" << diff << endl;
 				
 				if ((thisval == 0 || nextval <= thisval) && diff < nframes) {
-				//	cerr << "got quarter frame in this cycle: diff: " << diff << endl;
-					hit_at = (int) diff;
+					//cerr << "+++got quarter frame in this cycle: diff: " << diff << endl;
+					//hit_at = (int) diff;
 				}
+
+               //cout << info.beat << " " << info.last_beat << endl;
+
+               if(info.beat != last_beat_quater) {
+                   //cout << "---beat for quater frame" << diff << endl;
+                   last_beat_quater = info.beat;
+				   hit_at = (int) diff;
+               }
 			}
 		}
 	}

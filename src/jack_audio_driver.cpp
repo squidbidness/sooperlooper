@@ -416,6 +416,12 @@ JackAudioDriver::get_transport_info (TransportInfo &info)
 		info.bpm = tpos.beats_per_minute;
 	}
 
+
+    info.bar = tpos.bar;
+    info.last_beat = info.beat;
+    info.beat = tpos.beat;
+    info.tick = tpos.tick;
+
 	info.last_framepos = info.framepos;
 	info.framepos = tpos.frame;
 
